@@ -20,7 +20,7 @@ struct PermissionStatus: View {
     @Binding var draft: String
     var remove: (() -> Void)? = nil
     var body: some View {
-        LabeledContent("密钥状态", value: model.keyLoading ? "正在处理…" : model.keyConfigured ? "已保存到本机钥匙串" : "未配置")
+        LabeledContent("密钥状态", value: model.keyLoading ? "正在处理…" : model.credentials.requiresStorageRetry ? "需要解锁 / 重试" : model.keyConfigured ? "已保存到本机钥匙串" : "未配置")
         SecureField(model.keyConfigured ? "粘贴新的 OpenAI API Key 以更换" : "在这里粘贴你的 OpenAI API Key", text: $draft)
             .textFieldStyle(.roundedBorder).accessibilityLabel("OpenAI API Key")
         HStack {
@@ -80,6 +80,70 @@ struct PermissionStatus: View {
                 Button("启用 TranslateBar") { model.settings.enabled = true }
             }
         }
+    }
+}
+
+@MainActor private struct PermissionRepairSteps: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("系统列表可能仍保留旧版记录。请为当前安装的 App 重新授权：")
+            Text("1. 在“系统设置 → 隐私与安全性 → 辅助功能”中选中 TranslateBar，点“－”移除旧记录。")
+            Text("2. 点“＋”，重新添加“应用程序”中的 TranslateBar，并开启开关。")
+            Text("3. 从菜单栏退出 TranslateBar，再从“应用程序”重新打开。")
+            Text("若辅助功能已授权，但键盘监听仍未运行，点击“启用监听”；系统要求输入监控时，再为当前 App 开启。")
+            Button("在访达中显示当前 App…") { NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL]) }
+        }.font(.callout).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+@MainActor struct PermissionRecoveryView: View {
+    @ObservedObject var model: AppModel
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 10) {
+                Image(systemName: model.setupReadiness.textReady ? "checkmark.circle" : "exclamationmark.triangle")
+                    .font(.system(size: 36)).foregroundStyle(model.setupReadiness.textReady ? Color.green : Color.orange)
+                    .accessibilityHidden(true)
+                Text("恢复输入与划词翻译").font(.title.weight(.semibold))
+                Text("更新或重新安装后，macOS 可能需要重新授权。原有密钥、语言和模型设置会保留。")
+                    .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }.padding(.top, 28).padding(.horizontal, 30).padding(.bottom, 12)
+            Form {
+                Section {
+                    TextPermissionFields(model: model)
+                    if model.setupReadiness.textReady {
+                        Label("文字权限已就绪。", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    } else {
+                        Text("文字权限尚未就绪，输入与划词翻译暂不可用。请完成授权后继续。")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                } header: { Text("当前版本的实际状态") } footer: {
+                    Text("返回应用后会自动检查。辅助功能的系统开关已经开启，也可能仍需重新添加当前 App。")
+                }
+                Section {
+                    PermissionRepairSteps()
+                } header: { Text("已开启权限，仍不能用？") }
+                if model.credentials.requiresStorageRetry {
+                    Section("钥匙串需要确认") {
+                        Text("文字权限恢复后，可在“模型与 API”点击“解锁 / 重试”，按系统提示读取已保存的密钥。")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+            }.formStyle(.grouped).frame(maxWidth: 740).frame(maxWidth: .infinity)
+            Divider()
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Button("稍后处理") { model.setup.deferSetup() }
+                    Spacer()
+                    Button("重新检查") { model.refreshPermissions() }
+                    Button("完成") { _ = model.setup.finishRecovery(readiness: model.setupReadiness) }
+                        .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                        .disabled(!model.setupReadiness.textReady)
+                }
+                Text("稍后可从菜单栏的“恢复输入与划词翻译…”继续。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.padding(.horizontal, 30).padding(.vertical, 18)
+        }.background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
@@ -174,6 +238,7 @@ struct PermissionStatus: View {
                     Spacer()
                     Button("重新检查") { model.refreshPermissions() }
                 }
+                DisclosureGroup("开关已开启，仍显示待授权？") { PermissionRepairSteps() }
             } header: { Text("2. 开启文字翻译权限") } footer: {
                 Text("在系统设置 → 隐私与安全性中找到 TranslateBar 并开启。监听已运行时，无需额外申请输入监控；如系统要求重新打开应用，请重启后继续。")
             }

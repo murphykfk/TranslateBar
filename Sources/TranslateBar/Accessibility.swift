@@ -568,7 +568,8 @@ struct TextElementIdentity {
     var active: Bool { tap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false }
 
     func start() {
-        guard tap == nil, AccessibleText.trusted else { return }
+        guard AccessibleText.trusted, !active else { return }
+        if tap != nil { stop() }
         let mask = CGEventMask(1 << CGEventType.keyDown.rawValue | 1 << CGEventType.keyUp.rawValue)
         let pointer = Unmanaged.passUnretained(self).toOpaque()
         tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: mask, callback: { _, type, event, context in

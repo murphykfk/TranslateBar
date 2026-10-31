@@ -56,6 +56,8 @@ A native macOS menu bar translator for people with their own OpenAI API key: tra
 
 完整的权限检查、划词与译声试用、校验文件用法和常见问题见 [安装与首次打开指南](docs/INSTALLATION.md)。
 
+**升级或重装后不能翻译？** 0.4.6 起会自动检查当前版本的文字权限，并显示恢复引导；即使系统开关已开启，也可能需要移除旧记录后重新添加当前 App。点击菜单栏的“恢复输入与划词翻译…”可继续处理，详见[升级后的权限恢复](docs/INSTALLATION.md#升级或重新安装后原来的权限开关已经开启却不能翻译)。
+
 ## 默认操作
 
 | 操作 | 默认方式 |

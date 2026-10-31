@@ -118,7 +118,7 @@ final class InstanceLock {
             Task { await SelectionPopupSmokeTest.run(model: model) }
         } else if CommandLine.arguments.contains("--rich-text-smoke-test") {
             Task { await RichTextSmokeTest.run(model: model) }
-        } else if !loginLaunch || model.setup.needsAutomaticPresentation || CommandLine.arguments.contains("--show-settings") { showSettings() }
+        } else if !loginLaunch || model.setup.needsAutomaticPresentation || model.setup.isPresented || CommandLine.arguments.contains("--show-settings") { showSettings() }
         UserDefaults.standard.set(true, forKey: "hasOpenedTranslateBar")
     }
     func applicationWillTerminate(_ notification: Notification) {
@@ -135,11 +135,14 @@ final class InstanceLock {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showSettings(); return true }
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let title = NSMenuItem(title: "TranslateBar · \(model.settings.enabled ? "正在待命" : "已暂停")", action: nil, keyEquivalent: ""); title.isEnabled = false; menu.addItem(title)
+        let title = NSMenuItem(title: "TranslateBar · \(model.readinessSummary)", action: nil, keyEquivalent: ""); title.isEnabled = false; menu.addItem(title)
+        if model.textPermissionIssue != nil {
+            add(menu, "恢复输入与划词翻译…") { [weak self] in self?.model.showPermissionRecovery() }
+        }
         let spend = NSMenuItem(title: "\(model.settings.budget.period.title)费用 \(money(model.spent))\(model.settings.budget.enabled ? " / " + money(model.settings.budget.limit, digits: 2) : "")", action: nil, keyEquivalent: ""); spend.isEnabled = false; menu.addItem(spend)
         menu.addItem(.separator())
-        add(menu, "翻译并替换当前段落", enabled: model.settings.enabled && model.settings.fourSpacesEnabled) { [weak self] in self?.model.translateInput() }
-        add(menu, "翻译选中文字 · \(model.settings.selectionShortcut.display)", enabled: model.settings.enabled && model.settings.selectionEnabled) { [weak self] in self?.model.translateSelection() }
+        add(menu, "翻译并替换当前段落", enabled: model.settings.enabled && model.settings.fourSpacesEnabled && model.setupReadiness.textReady) { [weak self] in self?.model.translateInput() }
+        add(menu, "翻译选中文字 · \(model.settings.selectionShortcut.display)", enabled: model.settings.enabled && model.settings.selectionEnabled && model.setupReadiness.textReady) { [weak self] in self?.model.translateSelection() }
         menu.addItem(.separator())
         add(menu, model.settings.enabled ? "暂停全部功能" : "恢复全部功能") { [weak self] in self?.model.settings.enabled.toggle() }
         add(menu, model.audioRunning || model.audioConnecting ? "停止实时译声" : "开始实时译声", enabled: model.settings.enabled && model.settings.audioEnabled) { [weak self] in self?.model.toggleAudio() }
@@ -154,10 +157,10 @@ final class InstanceLock {
     }
     private func add(_ menu: NSMenu, _ title: String, enabled: Bool = true, action: @escaping () -> Void) { let item = ClosureMenuItem(title: title, handler: action); item.isEnabled = enabled; menu.addItem(item) }
     private func updateStatus() {
-        let symbol = model.audioRunning ? "waveform.circle.fill" : !model.settings.enabled ? "pause.circle" : model.budgetWarning ? "exclamationmark.bubble" : "character.bubble"
+        let symbol = model.textPermissionIssue != nil ? "exclamationmark.triangle" : model.audioRunning ? "waveform.circle.fill" : !model.settings.enabled ? "pause.circle" : model.budgetWarning ? "exclamationmark.bubble" : "character.bubble"
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "TranslateBar"); image?.isTemplate = true
         statusItem?.button?.image = image
-        statusItem?.button?.toolTip = "TranslateBar · \(model.lastMessage)"
+        statusItem?.button?.toolTip = "TranslateBar · \(model.readinessSummary)\n\(model.lastMessage)"
     }
     private func showSettings() {
         if settingsWindow == nil {

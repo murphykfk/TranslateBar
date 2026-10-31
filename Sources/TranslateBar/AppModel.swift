@@ -112,7 +112,7 @@ import TranslateCore
             guard let self else { return }
             await self.credentials.load()
             if !settingsFailed { self.lastMessage = self.credentials.message }
-            self.setup.presentAutomatically(readiness: self.setupReadiness)
+            self.refreshPermissions()
         }
         if settingsFailed { lastMessage = "设置文件无法读取，已暂停全部功能。请检查设置后再启用。" }
         monitor.settings = { [weak self] in self?.settings ?? AppSettings() }
@@ -134,9 +134,25 @@ import TranslateCore
     var setupReadiness: SetupReadiness {
         SetupReadiness(keyLoaded: credentials.didLoad && !keyLoading, keyConfigured: keyConfigured, accessibilityGranted: accessibilityGranted, keyboardActive: keyboardActive)
     }
+    var textFeaturesEnabled: Bool { settings.enabled && (settings.fourSpacesEnabled || settings.selectionEnabled) }
+    var textPermissionIssue: TextPermissionIssue? { textFeaturesEnabled ? setupReadiness.permissionIssue : nil }
+    var readinessSummary: String {
+        if !settings.enabled { return "已暂停" }
+        if let issue = textPermissionIssue { return issue.title }
+        if !credentials.didLoad || keyLoading { return "正在读取密钥" }
+        if credentials.requiresStorageRetry { return "钥匙串需要确认" }
+        if !keyConfigured { return "API Key 未配置" }
+        return audioRunning ? "实时译声运行中" : "正在待命"
+    }
     func showSetupGuide() {
         refreshPermissions()
-        setup.present(readiness: setupReadiness)
+        if textPermissionIssue != nil, keyConfigured { setup.presentPermissionRecovery() }
+        else { setup.present(readiness: setupReadiness) }
+    }
+    func showPermissionRecovery() {
+        refreshPermissions()
+        setup.presentPermissionRecovery()
+        requestSettings?()
     }
     func refreshModels() {
         guard !modelsLoading, !keyLoading else { return }
@@ -171,10 +187,16 @@ import TranslateCore
         testOutput = ""
     }
     func refreshPermissions() {
+        let wasTextReady = accessibilityGranted && keyboardActive
         accessibilityGranted = AccessibleText.trusted
         if accessibilityGranted && settings.enabled { monitor.start() } else { monitor.stop() }
         keyboardActive = monitor.active
         recordingPermission.refresh()
+        if wasTextReady && !setupReadiness.textReady {
+            translationTask?.cancel(); dismissSelectionResult(); dismissInputFeedback()
+        }
+        if setup.presentAutomatically(readiness: setupReadiness, textFeaturesEnabled: textFeaturesEnabled) { requestSettings?() }
+        statusChanged?()
     }
     func requestAccessibility() { AccessibleText.requestPermission(); refreshPermissions() }
     func requestKeyboard() { _ = CGRequestListenEventAccess(); refreshPermissions() }

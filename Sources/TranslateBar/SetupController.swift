@@ -8,6 +8,16 @@ enum SetupStep: Int, CaseIterable {
     }
 }
 
+enum TextPermissionIssue {
+    case accessibility, keyboard
+    var title: String {
+        switch self {
+        case .accessibility: return "辅助功能待授权"
+        case .keyboard: return "键盘监听未运行"
+        }
+    }
+}
+
 struct SetupReadiness: Equatable {
     var keyLoaded: Bool
     var keyConfigured: Bool
@@ -16,15 +26,18 @@ struct SetupReadiness: Equatable {
     var textReady: Bool { accessibilityGranted && keyboardActive }
     var canFinish: Bool { keyLoaded && keyConfigured && textReady }
     var firstStep: SetupStep { !keyConfigured ? .key : !textReady ? .permissions : .ready }
+    var permissionIssue: TextPermissionIssue? { !accessibilityGranted ? .accessibility : !keyboardActive ? .keyboard : nil }
 }
 
 @MainActor final class SetupController: ObservableObject {
     private enum Status: String { case pending, deferred, completed }
     private static let storageKey = "setupGuide.status.v1"
     @Published private(set) var isPresented = false
+    @Published private(set) var isPermissionRecovery = false
     @Published var step: SetupStep = .key
     private let defaults: UserDefaults
     private var status: Status
+    private var recoveryDeferred = false
     var needsAutomaticPresentation: Bool { status == .pending }
 
     init(defaults: UserDefaults = .standard) {
@@ -36,15 +49,42 @@ struct SetupReadiness: Equatable {
             defaults.set(status.rawValue, forKey: Self.storageKey)
         }
     }
-    func presentAutomatically(readiness: SetupReadiness) {
-        guard needsAutomaticPresentation, readiness.keyLoaded, !isPresented else { return }
-        present(readiness: readiness)
+    @discardableResult func presentAutomatically(readiness: SetupReadiness, textFeaturesEnabled: Bool = true) -> Bool {
+        // A healthy interval rearms recovery if permission is later revoked.
+        if readiness.textReady { recoveryDeferred = false }
+        guard !isPresented else { return false }
+        if needsAutomaticPresentation {
+            guard readiness.keyLoaded else { return false }
+            present(readiness: readiness)
+            return true
+        }
+        guard textFeaturesEnabled, !readiness.textReady, !recoveryDeferred else { return false }
+        presentPermissionRecovery()
+        return true
     }
     func present(readiness: SetupReadiness) {
+        isPermissionRecovery = false
         step = readiness.firstStep
         isPresented = true
     }
-    func deferSetup() { persist(.deferred); isPresented = false }
+    func presentPermissionRecovery() {
+        isPermissionRecovery = true
+        step = .permissions
+        isPresented = true
+    }
+    func deferSetup() {
+        if !isPermissionRecovery { persist(.deferred) }
+        recoveryDeferred = true
+        isPresented = false
+    }
+    @discardableResult func finishRecovery(readiness: SetupReadiness) -> Bool {
+        guard readiness.textReady else { return false }
+        if status == .pending && readiness.canFinish { persist(.completed) }
+        recoveryDeferred = false
+        isPresented = false
+        isPermissionRecovery = false
+        return true
+    }
     @discardableResult func finish(readiness: SetupReadiness) -> Bool {
         guard readiness.canFinish else { step = readiness.firstStep; return false }
         persist(.completed); isPresented = false

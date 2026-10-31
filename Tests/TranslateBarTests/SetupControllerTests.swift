@@ -72,6 +72,92 @@ final class SetupControllerTests: XCTestCase {
             XCTAssertFalse(next.isPresented)
         }
     }
+    @MainActor func testCompletedInstallationRecoversMissingPermissionsOnEveryRestart() {
+        withDefaults { defaults in
+            let first = SetupController(defaults: defaults)
+            XCTAssertTrue(first.finish(readiness: readiness()))
+            for _ in 0..<3 {
+                let upgraded = SetupController(defaults: defaults)
+                XCTAssertTrue(upgraded.presentAutomatically(readiness: readiness(loaded: false, accessibility: false, keyboard: false)), "Permission recovery must not wait for Keychain interaction.")
+                XCTAssertFalse(upgraded.presentAutomatically(readiness: readiness(accessibility: false, keyboard: false)))
+                XCTAssertTrue(upgraded.isPermissionRecovery)
+                XCTAssertEqual(upgraded.step, .permissions)
+                upgraded.deferSetup()
+                XCTAssertFalse(upgraded.presentAutomatically(readiness: readiness(accessibility: false, keyboard: false)), "Deferring must suppress repeated polling in this session.")
+            }
+            let restored = SetupController(defaults: defaults)
+            XCTAssertFalse(restored.presentAutomatically(readiness: readiness()), "Recovery must not erase the completed setup status.")
+        }
+    }
+    @MainActor func testLegacyInstallationOpensPermissionRecoveryWithoutRepeatingKeySetup() {
+        withDefaults { defaults in
+            defaults.set(true, forKey: "hasOpenedTranslateBar")
+            let setup = SetupController(defaults: defaults)
+            XCTAssertTrue(setup.presentAutomatically(readiness: readiness(accessibility: false, keyboard: false)))
+            XCTAssertTrue(setup.isPermissionRecovery)
+            XCTAssertEqual(setup.step, .permissions)
+        }
+    }
+    @MainActor func testRecoveryRespectsPausedOrDisabledTextFeatures() {
+        withDefaults { defaults in
+            let setup = SetupController(defaults: defaults)
+            XCTAssertTrue(setup.finish(readiness: readiness()))
+            XCTAssertFalse(setup.presentAutomatically(readiness: readiness(keyboard: false), textFeaturesEnabled: false))
+            XCTAssertFalse(setup.isPresented)
+            XCTAssertTrue(setup.presentAutomatically(readiness: readiness(keyboard: false), textFeaturesEnabled: true))
+            XCTAssertTrue(setup.isPermissionRecovery)
+        }
+    }
+    @MainActor func testDeferredRecoveryRearmsOnlyAfterPermissionsBecomeHealthy() {
+        withDefaults { defaults in
+            let setup = SetupController(defaults: defaults)
+            XCTAssertTrue(setup.finish(readiness: readiness()))
+            XCTAssertTrue(setup.presentAutomatically(readiness: readiness(keyboard: false)))
+            setup.deferSetup()
+            for _ in 0..<5 {
+                XCTAssertFalse(setup.presentAutomatically(readiness: readiness(keyboard: false)))
+            }
+            XCTAssertFalse(setup.presentAutomatically(readiness: readiness()))
+            XCTAssertTrue(setup.presentAutomatically(readiness: readiness(accessibility: false, keyboard: false)))
+        }
+    }
+    @MainActor func testRecoveryRequiresBothLivePermissionsBeforeCompletion() {
+        withDefaults { defaults in
+            let setup = SetupController(defaults: defaults)
+            setup.presentPermissionRecovery()
+            XCTAssertFalse(setup.finishRecovery(readiness: readiness(accessibility: false)))
+            XCTAssertFalse(setup.finishRecovery(readiness: readiness(keyboard: false)))
+            XCTAssertTrue(setup.isPresented)
+            XCTAssertTrue(setup.finishRecovery(readiness: readiness()))
+            XCTAssertFalse(setup.isPresented)
+            XCTAssertFalse(setup.isPermissionRecovery)
+        }
+    }
+    @MainActor func testManualRecoveryOnNewInstallCanCompleteAnOtherwiseReadySetup() {
+        withDefaults { defaults in
+            let setup = SetupController(defaults: defaults)
+            setup.presentPermissionRecovery()
+            XCTAssertTrue(setup.finishRecovery(readiness: readiness()))
+            XCTAssertFalse(setup.presentAutomatically(readiness: readiness()))
+            XCTAssertFalse(SetupController(defaults: defaults).needsAutomaticPresentation)
+        }
+    }
+    @MainActor func testRecoveryPollingPreservesTheGuideAndDoesNotReopenAfterFinishing() {
+        withDefaults { defaults in
+            let setup = SetupController(defaults: defaults)
+            XCTAssertTrue(setup.finish(readiness: readiness()))
+            XCTAssertTrue(setup.presentAutomatically(readiness: readiness(keyboard: false)))
+            XCTAssertFalse(setup.presentAutomatically(readiness: readiness()))
+            XCTAssertTrue(setup.isPresented, "Leave the recovered state visible for the user to acknowledge.")
+            XCTAssertTrue(setup.finishRecovery(readiness: readiness()))
+            XCTAssertFalse(setup.presentAutomatically(readiness: readiness()))
+        }
+    }
+    func testPermissionIssueUsesActualAccessibilityAndKeyboardState() {
+        XCTAssertEqual(readiness(accessibility: false, keyboard: false).permissionIssue, .accessibility)
+        XCTAssertEqual(readiness(keyboard: false).permissionIssue, .keyboard)
+        XCTAssertNil(readiness().permissionIssue)
+    }
     @MainActor func testAudioPermissionChecksNeverRequestAccessAutomatically() {
         var granted = false
         var requests = 0

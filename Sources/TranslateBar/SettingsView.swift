@@ -41,7 +41,10 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
     var body: some View {
         Group {
-            if model.setup.isPresented { SetupGuideView(model: model) }
+            if model.setup.isPresented {
+                if model.setup.isPermissionRecovery { PermissionRecoveryView(model: model) }
+                else { SetupGuideView(model: model) }
+            }
             else { settingsContent }
         }.frame(minWidth: 880, minHeight: 650)
         .sheet(isPresented: Binding(get: { model.recordingPermission.isPresented }, set: { model.recordingPermission.isPresented = $0 })) { RecordingPermissionView(model: model) }
@@ -59,8 +62,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
                     }
                 }.listStyle(.sidebar)
                 VStack(alignment: .leading, spacing: 5) {
-                    Label(model.settings.enabled ? "翻译已启用" : "翻译已暂停", systemImage: model.settings.enabled ? "checkmark.circle" : "pause.circle")
-                    Text("版本 0.4.4").foregroundStyle(.tertiary)
+                    Label(model.readinessSummary, systemImage: model.textPermissionIssue != nil ? "exclamationmark.triangle" : model.settings.enabled ? "checkmark.circle" : "pause.circle")
+                    Text("版本 \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发版")").foregroundStyle(.tertiary)
                 }.font(.caption).foregroundStyle(.secondary).padding(18)
             }.frame(width: 184).background(.regularMaterial)
             Divider()
@@ -69,6 +72,18 @@ enum SettingsPage: String, CaseIterable, Identifiable {
                     Text(page.rawValue).font(.title2.weight(.semibold))
                     Text(page.detail).font(.callout).foregroundStyle(.secondary)
                 }.padding(.horizontal, 24).padding(.top, 22).padding(.bottom, 10)
+                if let issue = model.textPermissionIssue {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(issue.title).font(.callout.weight(.medium))
+                            Text("输入与划词翻译暂不可用，请恢复当前版本的权限。").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("恢复权限…") { model.showPermissionRecovery() }
+                    }.padding(12).background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                        .padding(.horizontal, 24).padding(.bottom, 8)
+                }
                 Group {
                     switch page {
                     case .general: generalSettings
@@ -121,7 +136,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
                 Toggle("登录后自动启动", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLogin($0) }))
             } footer: { note("关闭总开关会暂停文字翻译与译声。关闭设置窗口后，应用仍在菜单栏运行。") }
             Section("运行状态") {
-                HStack { LabeledContent("OpenAI 密钥", value: model.keyConfigured ? "已保存到钥匙串" : model.keyLoading ? "正在读取…" : "未配置"); Button(model.keyConfigured ? "管理…" : "配置…") { page = .api } }
+                HStack { LabeledContent("OpenAI 密钥", value: model.keyLoading ? "正在读取…" : model.credentials.requiresStorageRetry ? "需要解锁 / 重试" : model.keyConfigured ? "已保存到钥匙串" : "未配置"); Button(model.keyConfigured ? "管理…" : "配置…") { page = .api } }
                 TextPermissionFields(model: model)
                 HStack {
                     Text(model.setupReadiness.canFinish ? "文字翻译已准备好。" : "密钥与文字权限尚未全部就绪。")
