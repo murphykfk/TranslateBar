@@ -8,7 +8,8 @@ public enum TextCompatibilityRules {
         !secure && editable != false && enabled != false && isTextRole(role)
     }
     public static func isSingleTextLine(_ text: String) -> Bool {
-        !text.isEmpty && !text.unicodeScalars.contains(where: { [10, 13, 9, 0xfffc, 0x2028, 0x2029].contains($0.value) })
+        !text.isEmpty && !text.contains(where: { $0.isNewline })
+            && !text.unicodeScalars.contains(where: { $0.value < 0x20 || (0x7f...0x9f).contains($0.value) || $0.value == 0xfffc })
     }
     /// Keep indentation and non-gesture whitespace even without font metadata.
     public static func replacingLine(_ original: String, with translation: String, triggerSpaces: Int) throws -> String {

@@ -19,7 +19,7 @@ final class TextCompatibilityTests: XCTestCase {
         XCTAssertEqual(try TextCompatibilityRules.replacingLine("文本  ", with: "Text", triggerSpaces: 4), "Text  ")
     }
     func testLineFallbackRejectsStructuralCharactersAndEmptyText() {
-        for text in ["a\nb", "a\rb", "a\r\nb", "a\tb", "a\u{fffc}b", "a\u{2028}b", "a\u{2029}b", ""] {
+        for text in ["a\nb", "a\rb", "a\r\nb", "a\u{b}b", "a\u{c}b", "a\u{85}b", "a\tb", "a\u{0}b", "a\u{7}b", "a\u{13}b", "a\u{7f}b", "a\u{fffc}b", "a\u{2028}b", "a\u{2029}b", ""] {
             XCTAssertFalse(TextCompatibilityRules.isSingleTextLine(text))
             XCTAssertThrowsError(try TextCompatibilityRules.replacingLine("source", with: text, triggerSpaces: 4))
         }

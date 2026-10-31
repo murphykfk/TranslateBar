@@ -210,6 +210,12 @@ struct TextElementIdentity {
         guard !isSecure(element), (attribute(element, "AXEditable") as Bool?) != false,
               (attribute(element, kAXEnabledAttribute) as Bool?) != false else { throw AppError.message("当前控件不可编辑，已跳过。") }
         let role: String = attribute(element, kAXRoleAttribute) ?? ""
+        let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+        // Word can expose AXTextArea only after its canvas is initialized.
+        // Keep the same verified paragraph/soft-break scope in both states.
+        if WordTextRules.usesDocumentFallback(bundleID: bundle, role: role) {
+            throw AppError.message("Word 正文需要通过兼容路径回填，请开启“增强取词与回填兼容”。")
+        }
         guard canEdit(element) else { throw AppError.message("当前控件不可编辑，已跳过。") }
         // Chromium block editors expose AXValue with paragraph separators that
         // do not consistently share offsets with AXSelectedTextRange. A local
@@ -223,7 +229,6 @@ struct TextElementIdentity {
         let range = try ParagraphInput.range(in: full, caret: caret)
         let source = string.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !source.isEmpty else { throw AppError.message("当前段落没有需要翻译的文本，已跳过。") }
-        let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
         let rich = role == "AXTextArea" ? attributedText(element, range: range) : nil
         let hasFont = rich.map { $0.length > 0 && $0.attribute(.font, at: 0, effectiveRange: nil) is NSFont } ?? false
         let preserve = hasFont || ["com.apple.Notes", "com.apple.TextEdit", "com.murphy.TranslateBarFixture"].contains(bundle)
