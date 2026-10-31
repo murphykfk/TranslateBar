@@ -19,9 +19,17 @@ A native macOS menu bar translator for people with their own OpenAI API key: tra
 - 当前主要在 **Apple Silicon Mac** 上开发和验证；Intel Mac 尚未完整实机验证。
 - 自己的 OpenAI API Key，以及可用的 API 额度和网络连接。ChatGPT 订阅不等于 API 额度。
 
-## 构建与运行
+## 下载安装
 
-本仓库目前提供源码，不附带正式签名、公证的安装包。
+在 [GitHub Releases](https://github.com/murphykfk/TranslateBar/releases/latest) 下载 DMG，打开后将 **TranslateBar.app** 拖到 **Applications（应用程序）**。如果旧版正在运行，先从菜单栏退出再替换；复制完成后弹出磁盘映像，从“应用程序”启动。
+
+当前安装包适用 **Apple Silicon（M 系列芯片）**，要求 macOS 14.4 或更高版本。
+
+**签名状态：临时签名（ad hoc），未使用 Developer ID 分发证书，未通过 Apple 公证。** macOS 首次打开可能提示无法验证开发者。确认下载来源可信后，参考 [Apple 官方说明](https://support.apple.com/zh-cn/102445) 在系统设置中处理该应用的打开提示；也可以按下方步骤自行构建或使用自己的证书签名。普通下载用户不需要购买 Apple 开发者账号。
+
+每个发布版本附带 `SHA256SUMS.txt`，用于检查下载文件是否与发布的安装包一致。
+
+## 构建与运行
 
 需要 Xcode 16 或更新版本的开发工具（Swift 6.0+、macOS SDK）、Python 3，以及 Git。
 

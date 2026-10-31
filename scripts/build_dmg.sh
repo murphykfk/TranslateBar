@@ -53,6 +53,8 @@ TranslateBar
 首次启动时，按引导保存 Key、设置目标语言并授予所需系统权限。
 关闭设置窗口后，应用仍在菜单栏运行。
 
+首次打开方式及签名状态，请查看对应版本的项目发布说明。
+
 项目与源码：https://github.com/murphykfk/TranslateBar
 许可证：MIT（见 LICENSE.txt）
 

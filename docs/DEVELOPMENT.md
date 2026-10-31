@@ -39,7 +39,7 @@ open .build/CompatibilityFixture.app
 
 ## 签名
 
-`TRANSLATEBAR_SIGN_ID` 可以指定本机签名身份；设为 `-` 则使用临时签名。签名私钥和公证凭据由各自开发者保管，不进入仓库。构建脚本未自动执行 Apple 公证；当前仓库不发布正式安装包。
+`TRANSLATEBAR_SIGN_ID` 可以指定本机签名身份；设为 `-` 则使用临时签名。签名私钥和公证凭据由各自开发者保管，不进入仓库。构建脚本未自动执行 Apple 公证。当前 GitHub 下载包采用临时签名，不使用发布者的实名 Developer ID 证书，也不提交 Apple 公证。
 
 可用以下命令将已经构建的应用打包为 DMG，包含应用程序文件夹快捷方式、安装说明和 MIT 许可证：
 
@@ -47,6 +47,6 @@ open .build/CompatibilityFixture.app
 zsh scripts/build_dmg.sh /path/to/TranslateBar.app /path/to/output-directory
 ```
 
-打包不会改变输入应用的签名，也不会自动进行签名或公证。公开发行前，应使用 Developer ID Application 签名、公证并附加公证票据，再生成最终校验值。DMG 的构建输出不应提交到 Git 源码历史。
+打包不会改变输入应用的签名，也不会自动进行签名或公证。如需自行制作 Developer ID 发行包，可以用自己的证书签名、公证并附加公证票据。最终校验值应在所有打包、签名操作结束后生成。DMG 的构建输出不应提交到 Git 源码历史。
 
 这是按需维护的个人项目。修改完成后跑相关测试，欢迎提交可复现的问题或小范围 PR。
