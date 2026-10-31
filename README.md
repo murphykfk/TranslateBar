@@ -21,41 +21,40 @@ A native macOS menu bar translator for people with their own OpenAI API key: tra
 
 ## 下载安装
 
-在 [GitHub Releases](https://github.com/murphykfk/TranslateBar/releases/latest) 下载 DMG，打开后将 **TranslateBar.app** 拖到 **Applications（应用程序）**。如果旧版正在运行，先从菜单栏退出再替换；复制完成后弹出磁盘映像，从“应用程序”启动。
+普通用户不需要 Xcode、Apple 开发者账号，也不需要自行签名。
 
-当前安装包适用 **Apple Silicon（M 系列芯片）**，要求 macOS 14.4 或更高版本。
+1. 确认 Mac 使用 **Apple Silicon（M 系列芯片）**，系统为 **macOS 14.4 或更高版本**。可在苹果菜单 →“关于本机”查看。
+2. 打开 [GitHub Releases 下载页](https://github.com/murphykfk/TranslateBar/releases/latest)，在 **Assets** 中下载以 `.dmg` 结尾的安装包；`Source code` 是源码，不是安装包。
+3. 双击 DMG，将其中的 **TranslateBar.app** 拖到 **Applications（应用程序）**。如果已在运行旧版，先从菜单栏退出，再替换。
+4. 等复制完成，弹出磁盘映像，再从访达的 **应用程序 → TranslateBar** 打开；后续也从这个位置启动。
 
-**签名状态：临时签名（ad hoc），未使用 Developer ID 分发证书，未通过 Apple 公证。** macOS 首次打开可能提示无法验证开发者。确认下载来源可信后，参考 [Apple 官方说明](https://support.apple.com/zh-cn/102445) 在系统设置中处理该应用的打开提示；也可以按下方步骤自行构建或使用自己的证书签名。普通下载用户不需要购买 Apple 开发者账号。
+**当前包采用临时签名（ad hoc），未使用 Developer ID 分发证书，未通过 Apple 公证。** 如果首次打开被系统拦截，请继续下面的步骤。
 
-每个发布版本附带 `SHA256SUMS.txt`，用于检查下载文件是否与发布的安装包一致。
+### 首次打开被 macOS 拦截时
 
-## 构建与运行
+以下方法适用于“无法验证开发者”“Apple 无法检查是否包含恶意软件”等身份验证提示，且你已确认安装包来自本仓库的 Releases。
 
-需要 Xcode 16 或更新版本的开发工具（Swift 6.0+、macOS SDK）、Python 3，以及 Git。
+1. **先从“应用程序”尝试打开一次 TranslateBar**。如弹出拦截提示，选择“完成”或“好”关闭提示，保留应用。
+2. 打开苹果菜单 → **系统设置 → 隐私与安全性**（部分系统版本称“隐私与安全”），向下滚动到“安全性”区域。
+3. 找到与 **TranslateBar** 对应的拦截记录，点击 **仍要打开（Open Anyway）**。
+4. 若系统要求，使用 Touch ID 或 Mac 登录密码验证，并在再次出现的确认窗口点击 **打开**。
+5. 如应用没有自动启动，再从 **应用程序 → TranslateBar** 打开，然后按下方引导设置。
 
-```sh
-git clone https://github.com/murphykfk/TranslateBar.git
-cd TranslateBar
-zsh scripts/build.sh
-open dist/TranslateBar.app
-```
+没有“仍要打开”按钮时，先确认做过第 1 步，再重新查看系统设置。若仍然没有按钮，或提示“已损坏”“将损坏你的电脑”，请看 [完整安装与排障说明](docs/INSTALLATION.md)，不要把这些提示都当成普通开发者验证提示处理。
 
-没有第三方 Swift 包依赖。构建脚本会生成图标和 `.app`，优先使用本机可用的 Apple 开发证书；没有可用证书时使用临时签名。也可以显式选择临时签名：
+这是针对单个应用的打开确认，无需关闭 Mac 的全局安全检查。按钮名称可能随系统版本略有差异，见 [Apple 官方打开说明](https://support.apple.com/zh-cn/102445)。
 
-```sh
-TRANSLATEBAR_SIGN_ID=- zsh scripts/build.sh
-```
+## 第一次设置与试用
 
-建议将应用放在固定位置使用。更换签名、位置或重建后，macOS 可能要求重新授予权限。本地构建与正式的 Developer ID 签名、公证发行是不同的步骤。
+1. 在引导中粘贴自己的 **OpenAI API Key**，点击 **保存密钥**，确认显示“已保存到本机钥匙串”后继续。保存只存储 Key；可选的“测试连接”才会实际调用 API，并产生少量费用。
+2. 点击 **前往授权…**，在 **系统设置 → 隐私与安全性 → 辅助功能**（部分版本称“无障碍”）为 TranslateBar 开启权限；列表没有应用时，点“＋”添加“应用程序”中的 TranslateBar。
+3. 返回引导，检查 **辅助功能：已授权**、**键盘监听：运行中**。若系统要求输入监控，再到“隐私与安全性 → 输入监控”开启。系统要求重新打开应用时，退出并重新打开后继续。
+4. 完成引导后，可到 **菜单栏图标 → 设置… → 常规 → 翻译练习…** 试用。输入中文、确认输入法选词，将光标留在段落末尾，快速按 **四次空格**；原文应被英语译文替换。次数可在“输入翻译”中改为两次或三次。
+5. 只用文字翻译时，无需录制权限。要使用译声，先播放视频，再到 **设置… → 实时译声** 选择“声音来源”并开始，按提示为 TranslateBar 开启 **录屏与系统录音**；当前取音接口仅开启“系统录音”仍不足，具体名称随 macOS 版本可能不同。应用只接收音频，不接收或上传画面。
 
-## 第一次使用
+关闭设置窗口后，应用继续在 **屏幕顶部菜单栏** 运行。API Key 不需要填写在源码或 `.env` 中；语言、模型和费用限额可在设置中继续调整。翻译练习和实际翻译可能产生 API 费用；输入与划词缓存命中时不调用 API。
 
-1. 打开 TranslateBar，在引导中粘贴自己的 API Key，保存到这台 Mac 的钥匙串。
-2. 按引导开启“辅助功能”，检查键盘监听；系统要求时再开启“输入监控”。
-3. 到输入框完成输入和选词，快速按配置次数的空格。也可在设置里打开可选的“翻译练习”。
-4. 使用译声时，先选择声音来源，再开始。首次使用按提示授予“录屏与系统录音”权限。
-
-应用关闭设置窗口后仍在菜单栏运行，可从菜单栏暂停功能或退出。API Key 不需要填写在源码或 `.env` 中。
+完整的权限检查、划词与译声试用、校验文件用法和常见问题见 [安装与首次打开指南](docs/INSTALLATION.md)。
 
 ## 默认操作
 
@@ -91,6 +90,25 @@ TRANSLATEBAR_SIGN_ID=- zsh scripts/build.sh
 - 译声捕获的是所选应用，不能隔离浏览器单个标签页；请避免其他标签页同时发声。
 - 网络和模型处理会带来译声延迟，不保证与视频口型同步。更换声音来源、输出语言或原声设置前请先停止译声。
 - 终端和钥匙串默认排除；可按应用名称添加或恢复排除项。密码输入框始终跳过。
+
+## 从源码构建
+
+需要 Xcode 16 或更新版本的开发工具（Swift 6.0+、macOS SDK）、Python 3，以及 Git。
+
+```sh
+git clone https://github.com/murphykfk/TranslateBar.git
+cd TranslateBar
+zsh scripts/build.sh
+open dist/TranslateBar.app
+```
+
+没有第三方 Swift 包依赖。构建脚本会生成图标和 `.app`，优先使用本机可用的 Apple 开发证书；没有可用证书时使用临时签名。也可以显式选择临时签名：
+
+```sh
+TRANSLATEBAR_SIGN_ID=- zsh scripts/build.sh
+```
+
+建议将应用放在固定位置使用。更换签名、位置或重建后，macOS 可能要求重新授予权限。本地构建与正式的 Developer ID 签名、公证发行是不同的步骤。
 
 ## 开发与反馈
 
