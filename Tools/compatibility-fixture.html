@@ -1,0 +1,22 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>TranslateBar Compatibility · web</title>
+<style>body{font:16px system-ui;max-width:900px;margin:40px auto}button{margin:4px;padding:8px}input,textarea,[contenteditable]{font:16px system-ui;border:1px solid #999;padding:12px;display:block;width:95%;min-height:32px;margin:20px 0}[contenteditable]{white-space:pre-wrap}h2{font-size:22px}#status{white-space:pre-wrap}</style>
+<h2>TranslateBar 独立网页兼容测试</h2><p>仅本地测试，没有提交和网络请求。</p><div id="buttons"></div><main id="editor"></main><p id="status">尚未编辑</p>
+<script>
+const source='明天上午十点开会，请带上笔记本。    ';
+for(const mode of ['input','search','textarea','controlled','contenteditable','nested','readonly','password']){
+ const button=document.createElement('button');button.textContent=mode;button.onclick=()=>setup(mode);document.querySelector('#buttons').append(button);
+}
+function setup(mode){
+ document.title='TranslateBar Compatibility · '+mode;
+ const root=document.querySelector('#editor');root.replaceChildren();
+ const el=document.createElement(mode==='textarea'?'textarea':['contenteditable','nested'].includes(mode)?'div':'input');
+ el.setAttribute('aria-label','兼容测试 '+mode);el.id='compat-editor';el.spellcheck=false;
+ if(mode==='password')el.type='password';if(mode==='search')el.type='search';if(mode==='readonly')el.readOnly=true;
+ if(['contenteditable','nested'].includes(mode)){el.contentEditable='true';if(mode==='nested')el.innerHTML='<h3>Protected heading</h3><p><span>'+source+'</span></p>';else el.textContent=source;}
+ else el.value=source;
+ root.append(el);let state=source;document.querySelector('#status').textContent='等待编辑';
+ el.addEventListener('input',()=>{if(mode==='controlled'){state=el.value;requestAnimationFrame(()=>{el.value=state;});}document.querySelector('#status').textContent='已收到 input 事件；包含英文：'+/meeting/i.test(el.value??el.textContent);});
+ el.focus();if(el.setSelectionRange)el.setSelectionRange(source.length,source.length);else{const range=document.createRange();range.selectNodeContents(el);range.collapse(false);const selection=getSelection();selection.removeAllRanges();selection.addRange(range);}
+}
+setup('input');
+</script></html>

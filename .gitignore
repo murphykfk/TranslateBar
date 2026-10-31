@@ -1,0 +1,29 @@
+.env
+.env.*
+!.env.example
+.build/
+.swiftpm/
+dist/
+.DS_Store
+*.xcuserstate
+xcuserdata/
+
+# Local credentials and signing material
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.mobileprovision
+*.provisionprofile
+.secrets/
+
+# Local diagnostics, captures and temporary files
+*.log
+*.dSYM/
+*.xcresult/
+screenshots/
+recordings/
+Tools/wps-fixture/
+*.swp
+*~

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>TranslateBar 划词浮窗本机测试</title>
+<style>body{max-width:780px;margin:72px auto;font:18px/1.8 system-ui;color:#222;background:#f7f7f5}button{font:inherit;margin:8px 8px 8px 0;padding:8px 14px}#comment{background:white;padding:24px;border:1px solid #ccc;border-radius:8px}#status{font-size:15px;color:#555}</style>
+<h1>评论区选区刷新测试</h1>
+<p>仅用于本机基础测试，不发送网络请求或调用翻译 API。测试时选区会经历节点重建和短暂清空，最后自动取消选中。</p>
+<div id="comments"><p id="comment" tabindex="0">TranslateBar comment fixture: the meeting starts at ten tomorrow morning.</p></div>
+<button id="start">选中并开始动态刷新测试</button><button id="clear">取消选中</button>
+<p id="status">尚未开始</p>
+<script>
+const text='TranslateBar comment fixture: the meeting starts at ten tomorrow morning.';
+let timers=[],generation=0;
+function selectComment(){const p=document.querySelector('#comment');p.focus({preventScroll:true});const range=document.createRange();range.selectNodeContents(p);const s=getSelection();s.removeAllRanges();s.addRange(range)}
+function later(action,delay){timers.push(setTimeout(action,delay))}
+function stop(){generation++;timers.forEach(clearTimeout);timers=[]}
+document.querySelector('#start').onclick=()=>{
+ stop();const token=generation;selectComment();document.querySelector('#status').dataset.startedAt=String(Date.now());document.querySelector('#status').textContent='测试中：选区暂时清空或节点重建后恢复，10.5 秒后真正取消选中。';
+ for(let i=0;i<9;i++)later(()=>{
+  if(token!==generation)return;
+  const previous=document.querySelector('#comment'),next=document.createElement('p');next.id='comment';next.tabIndex=0;next.textContent=text;previous.replaceWith(next);getSelection().removeAllRanges();next.focus({preventScroll:true});
+  later(()=>{if(token===generation)selectComment()},160);
+ },1500+i*650);
+ later(()=>{if(token!==generation)return;getSelection().removeAllRanges();document.querySelector('#status').textContent='已真正取消选中，浮窗应自动隐藏。'},10500);
+};
+document.querySelector('#clear').onclick=()=>{stop();getSelection().removeAllRanges();document.querySelector('#status').textContent='已取消选中。'};
+</script></html>
