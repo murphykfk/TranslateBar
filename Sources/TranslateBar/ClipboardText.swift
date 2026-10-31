@@ -8,6 +8,7 @@ struct ClipboardTextContext {
     let pid: pid_t
     let title: String
     let revision: UInt64
+    var windowOnlyFocus = false
 }
 struct ClipboardTextSnapshot {
     let context: ClipboardTextContext
@@ -19,11 +20,36 @@ struct ClipboardTextSnapshot {
 /// Never uses Select All or injects Return, Tab, Cut, or Delete.
 @MainActor enum ClipboardText {
     static func context(settings: AppSettings) throws -> ClipboardTextContext {
-        let (element, pid) = try AccessibleText.focused(settings: settings)
+        let owner = try AccessibleText.activeApplication(settings: settings)
+        let pid = owner.processIdentifier
         let app = AXUIElementCreateApplication(pid)
         guard let window: AXUIElement = AccessibleText.attribute(app, kAXFocusedWindowAttribute),
               (AccessibleText.attribute(window, kAXRoleAttribute) as String?) == kAXWindowRole else { throw AppError.message("当前窗口无法安全取词。") }
-        return ClipboardTextContext(element: element, window: window, pid: pid, title: AccessibleText.attribute(window, kAXTitleAttribute) ?? "", revision: TextInteraction.revision)
+        let title: String = AccessibleText.attribute(window, kAXTitleAttribute) ?? ""
+        let focused = TextFocus.resolve(pid: pid, wakeAccessibility: settings.enhancedCompatibility)
+        if let focused, !TextFocus.isContainer(focused) || owner.bundleIdentifier != "com.tencent.xinWeChat" {
+            guard !AccessibleText.isSecure(focused) else { throw AppError.message("密码输入框不参与翻译。") }
+            return ClipboardTextContext(element: focused, window: window, pid: pid, title: title, revision: TextInteraction.revision)
+        }
+        guard settings.enhancedCompatibility, permitsWindowOnly(owner: owner, window: window, title: title),
+              focused.map({ !AccessibleText.isSecure($0) }) ?? true else { throw AppError.message("当前控件未提供可访问文本，已跳过。") }
+        return ClipboardTextContext(element: window, window: window, pid: pid, title: title,
+                                    revision: TextInteraction.revision, windowOnlyFocus: true)
+    }
+    private static func permitsWindowOnly(owner: NSRunningApplication, window: AXUIElement, title: String) -> Bool {
+        guard owner.bundleIdentifier == "com.tencent.xinWeChat" else { return false }
+        let minimize: AXUIElement? = AccessibleText.attribute(window, kAXMinimizeButtonAttribute)
+        let close: AXUIElement? = AccessibleText.attribute(window, kAXCloseButtonAttribute)
+        let main: Bool = AccessibleText.attribute(window, kAXMainAttribute) ?? false
+        let modal: Bool = AccessibleText.attribute(window, kAXModalAttribute) ?? false
+        let collapsed = TextFocus.hasCollapsedWindowTree(window)
+        ReplacementDiagnostics.note("wechat_window_guard", ["main": main ? 1 : 0, "minimize": minimize != nil ? 1 : 0,
+            "close": close != nil ? 1 : 0, "modal": modal ? 1 : 0, "collapsed": collapsed ? 1 : 0])
+        return ChatDraftCompatibility.permitsMissingFocus(bundleID: owner.bundleIdentifier ?? "", windowTitle: title,
+            activeWindow: NSWorkspace.shared.frontmostApplication?.processIdentifier == owner.processIdentifier,
+            standardControls: minimize != nil && close != nil,
+            modal: modal,
+            secureInput: IsSecureEventInputEnabled()) && collapsed
     }
     static func validate(_ expected: ClipboardTextContext) throws {
         guard AccessibleText.trusted, !IsSecureEventInputEnabled(),
@@ -31,10 +57,21 @@ struct ClipboardTextSnapshot {
               TextInteraction.revision == expected.revision else { throw TextReplacementError.changed }
         let app = AXUIElementCreateApplication(expected.pid)
         guard let window: AXUIElement = AccessibleText.attribute(app, kAXFocusedWindowAttribute), CFEqual(window, expected.window),
-              (AccessibleText.attribute(window, kAXTitleAttribute) as String? ?? "") == expected.title,
-              let element: AXUIElement = AccessibleText.attribute(app, kAXFocusedUIElementAttribute), CFEqual(element, expected.element), !AccessibleText.isSecure(element) else { throw TextReplacementError.changed }
+              (AccessibleText.attribute(window, kAXTitleAttribute) as String? ?? "") == expected.title else { throw TextReplacementError.changed }
+        let element = TextFocus.resolve(pid: expected.pid)
+        if expected.windowOnlyFocus {
+            guard let owner = NSRunningApplication(processIdentifier: expected.pid),
+                  permitsWindowOnly(owner: owner, window: window, title: expected.title) else { throw TextReplacementError.changed }
+            if let element {
+                guard !AccessibleText.isSecure(element) else { throw TextReplacementError.changed }
+                let role: String = AccessibleText.attribute(element, kAXRoleAttribute) ?? "AXUnknown"
+                guard TextFocus.isContainer(element) || (TextCompatibilityRules.isTextRole(role) && AccessibleText.canEdit(element)) else { throw TextReplacementError.changed }
+            }
+        } else {
+            guard let element, CFEqual(element, expected.element), !AccessibleText.isSecure(element) else { throw TextReplacementError.changed }
+        }
     }
-    static func copy(_ context: ClipboardTextContext) async throws -> NSAttributedString {
+    static func copy(_ context: ClipboardTextContext, allowingWhitespace: Bool = false) async throws -> NSAttributedString {
         try validate(context)
         let transaction = TemporaryClipboard(text: "TranslateBar copy \(UUID().uuidString)")
         defer { transaction.restore() }
@@ -44,7 +81,7 @@ struct ClipboardTextSnapshot {
             try validate(context)
             try Task.checkCancellation()
             if let text = transaction.takeCopiedRichText() {
-                guard !text.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.string.utf8.count <= 60_000 else { throw AppError.message("未复制到有效文字，或选区超过 60 KB。") }
+                guard (allowingWhitespace ? !text.string.isEmpty : !text.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty), text.string.utf8.count <= 60_000 else { throw AppError.message("未复制到有效文字，或选区超过 60 KB。") }
                 return text
             }
         }
@@ -57,16 +94,50 @@ struct ClipboardTextSnapshot {
         try validate(context)
         let originalRange = AccessibleText.selectedRange(context.element)
         OfficeText.key(123, flags: [.maskCommand, .maskShift], to: context.pid)
+        var selectionPending = true
         do {
             await OfficeText.pause(0.04)
             let copied = try await copy(context)
             try TextInputGate.check()
             guard TextCompatibilityRules.isSingleTextLine(copied.string) else { throw AppError.message("此编辑器无法安全定位当前行，请使用划词翻译。") }
-            if collapse { await restoreCaret(context, original: originalRange) }
+            if context.windowOnlyFocus {
+                await restoreCaret(context, original: nil)
+                selectionPending = false
+                try await verifyCaret(context, line: copied.string)
+                ReplacementDiagnostics.note("wechat_caret_verified")
+                if !collapse {
+                    OfficeText.key(123, flags: [.maskCommand, .maskShift], to: context.pid)
+                    selectionPending = true
+                    await OfficeText.pause(0.04)
+                    let selected = try await copy(context)
+                    guard selected.string == copied.string else { throw TextReplacementError.changed }
+                }
+            }
+            if collapse && selectionPending { await restoreCaret(context, original: originalRange) }
             return copied
         } catch {
-            await restoreCaret(context, original: originalRange)
+            if selectionPending { await restoreCaret(context, original: originalRange) }
             throw error
+        }
+    }
+    static func verifyCaret(_ context: ClipboardTextContext, line: String) async throws {
+        try await TextInputGate.run(pid: context.pid) {
+            try validate(context)
+            let original = AccessibleText.selectedRange(context.element)
+            OfficeText.key(123, flags: .maskShift, to: context.pid)
+            let character: NSAttributedString
+            do {
+                await OfficeText.pause(0.04)
+                character = try await copy(context, allowingWhitespace: true)
+            } catch {
+                await restoreCaret(context, original: original)
+                throw error
+            }
+            await restoreCaret(context, original: original)
+            guard ChatDraftCompatibility.matchesCaretProbe(line: line, selectedCharacter: character.string) else {
+                ReplacementDiagnostics.fail("chat_caret_not_verified")
+                throw AppError.message("未确认当前焦点位于文字输入区，原文未改动。")
+            }
         }
     }
     private static func restoreCaret(_ context: ClipboardTextContext, original: NSRange?) async {
@@ -92,8 +163,14 @@ struct ClipboardTextSnapshot {
     static func input(settings: AppSettings) async throws -> TextSnapshot {
         let context = try context(settings: settings)
         let role: String = AccessibleText.attribute(context.element, kAXRoleAttribute) ?? ""
-        guard TextCompatibilityRules.permitsLineFallback(role: role, editable: AccessibleText.canEdit(context.element), enabled: AccessibleText.attribute(context.element, kAXEnabledAttribute), secure: AccessibleText.isSecure(context.element)) else { throw AppError.message("当前控件未提供安全的编辑能力，请改用划词翻译。") }
+        guard context.windowOnlyFocus || TextCompatibilityRules.permitsLineFallback(role: role, editable: AccessibleText.canEdit(context.element), enabled: AccessibleText.attribute(context.element, kAXEnabledAttribute), secure: AccessibleText.isSecure(context.element)) else { throw AppError.message("当前控件未提供安全的编辑能力，请改用划词翻译。") }
         let text = try await prefix(context, collapse: true)
+        if context.windowOnlyFocus {
+            guard ChatDraftCompatibility.containsTrigger(text.string, spaces: settings.spaceCount) else {
+                ReplacementDiagnostics.fail("chat_trigger_not_verified")
+                throw AppError.message("未确认微信输入草稿，请在聊天输入框完成文字后，按设置次数连续空格。原文未改动。")
+            }
+        }
         // Reject mixed font/weight before using the translation service.
         if text.attribute(.font, at: 0, effectiveRange: nil) is NSFont { _ = try RichTextReplacement.translated("Local format check", preserving: text, removingTriggerSpaces: false) }
         return snapshot(context, text: text, settings: settings, input: true)

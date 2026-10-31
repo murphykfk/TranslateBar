@@ -39,15 +39,17 @@ struct TextElementIdentity {
         guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
         return value as? T
     }
-    static func focused(settings: AppSettings, allowOwnApp: Bool = false) throws -> (AXUIElement, pid_t) {
+    static func activeApplication(settings: AppSettings, allowOwnApp: Bool = false) throws -> NSRunningApplication {
         guard trusted else { throw AppError.message("请先在系统设置中授予 TranslateBar 辅助功能权限。") }
         guard !IsSecureEventInputEnabled() else { throw AppError.message("当前处于安全输入模式，已跳过。") }
         guard let app = NSWorkspace.shared.frontmostApplication,
               allowOwnApp || app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
               !settings.excludes(app.bundleIdentifier ?? "") else { throw AppError.message("当前应用不支持或已被排除。") }
-        let application = AXUIElementCreateApplication(app.processIdentifier)
-        AXUIElementSetMessagingTimeout(application, 0.35)
-        guard let element: AXUIElement = attribute(application, kAXFocusedUIElementAttribute) else { throw AppError.message("当前控件未提供可访问文本，已跳过。") }
+        return app
+    }
+    static func focused(settings: AppSettings, allowOwnApp: Bool = false) throws -> (AXUIElement, pid_t) {
+        let app = try activeApplication(settings: settings, allowOwnApp: allowOwnApp)
+        guard let element = TextFocus.resolve(pid: app.processIdentifier, wakeAccessibility: settings.enhancedCompatibility) else { throw AppError.message("当前控件未提供可访问文本，已跳过。") }
         guard !isSecure(element) else { throw AppError.message("密码输入框不参与翻译。") }
         return (element, app.processIdentifier)
     }
@@ -313,8 +315,7 @@ struct TextElementIdentity {
     private static func target(_ snapshot: TextSnapshot) throws -> AXUIElement {
         guard !IsSecureEventInputEnabled() else { throw AppError.message("当前处于安全输入模式，未回填。") }
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == snapshot.pid else { throw AppError.message("焦点已经切换，译文保留在浮窗中。") }
-        let app = AXUIElementCreateApplication(snapshot.pid)
-        guard let current: AXUIElement = attribute(app, kAXFocusedUIElementAttribute) else { throw AppError.message("输入框焦点已经变化，未覆盖原文。") }
+        guard let current = TextFocus.resolve(pid: snapshot.pid) else { throw AppError.message("输入框焦点已经变化，未覆盖原文。") }
         if let revision = snapshot.interactionRevision, revision != TextInteraction.revision {
             ReplacementDiagnostics.fail("input_revision", ["delta": Int(min(TextInteraction.revision &- revision, 1_000_000))])
             ReplacementDiagnostics.note("recent_" + TextInteraction.lastKind.rawValue)

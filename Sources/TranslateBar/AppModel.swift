@@ -227,6 +227,7 @@ import TranslateCore
     }
     private func captureText(input: Bool, quiet: Bool) {
         translating = true
+        if input { ReplacementDiagnostics.beginCapture() }
         let feedbackID = input && settings.inputFeedbackEnabled ? inputFeedback.begin(pid: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0) : nil
         if feedbackID != nil { showInputFeedback?() }
         translationTask = Task {
@@ -254,6 +255,8 @@ import TranslateCore
                 finishTextRequest()
                 if !(error is CancellationError) {
                     if input {
+                        ReplacementDiagnostics.fail("input_capture_failed")
+                        ReplacementDiagnostics.finish(success: false)
                         lastMessage = error.localizedDescription
                         updateInputFeedback(feedbackID, message: error.localizedDescription, detail: "原文未改动 · 可尝试选中文字后翻译", phase: .failure)
                     } else if !quiet { showError(error.localizedDescription) }

@@ -35,6 +35,15 @@ import TranslateCore
                 report["current_value_matches"] = AccessibleText.textValue(snapshot.element) == snapshot.fullValue
                 report["value_length"] = snapshot.fullValue.map { ($0 as NSString).length } ?? -1
                 report["ax_character_count"] = (AccessibleText.attribute(snapshot.element, kAXNumberOfCharactersAttribute) as Int?) ?? -1
+                if bundle == "com.murphy.CompatibilityFixture" {
+                    let context = try ClipboardText.context(settings: settings)
+                    let caret = AccessibleText.selectedRange(context.element)
+                    let line = try await ClipboardText.prefix(context, collapse: true)
+                    try await ClipboardText.verifyCaret(context, line: line.string)
+                    guard AccessibleText.selectedRange(context.element) == caret else { throw AppError.message("光标校验改变了测试光标位置。") }
+                    report["caret_capability_probe_verified"] = true
+                    report["caret_restored_after_probe"] = true
+                }
                 let replacement = snapshot.source.replacingOccurrences(of: source, with: target)
                 let undo = try await AccessibleText.replace(snapshot, with: replacement)
                 report["replacement_verified"] = true

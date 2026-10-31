@@ -14,6 +14,10 @@ import Foundation
     }
     private(set) static var current: Report?
     static var latestFailure: String? { current?.failure }
+    static func beginCapture() {
+        current = Report(version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development", richText: false)
+        note("capture_begin")
+    }
     static func begin(_ snapshot: TextSnapshot) {
         current = Report(version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development", richText: snapshot.preservesRichText)
         note("captured", ["length": snapshot.fullValue?.utf16.count ?? -1, "caret": snapshot.selectionRange?.location ?? -1, "selection": snapshot.selectionRange?.length ?? -1])
