@@ -156,6 +156,12 @@ enum SettingsPage: String, CaseIterable, Identifiable {
                 note("优先使用系统文本接口；无法取词时临时复制选区并恢复剪贴板。Word 正文会额外检查可编辑状态及换行边界；其他兼容控件仅替换光标前当前行。不全选整个页面，密码框与排除的应用始终跳过。")
                 Toggle("WPS 文字兼容模式", isOn: $model.settings.wpsCompatibilityEnabled)
                 note("WPS 正文无法直接取词时，通过临时复制读取所选文字并恢复剪贴板。输入翻译只处理光标之前的当前段落，不整篇覆盖；正文的字号与粗细会保留。")
+                HStack {
+                    Text("遇到问题时可复制最近一次失败的状态记录，不含原文或 API Key。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("复制兼容性诊断") { model.copyCompatibilityDiagnostic() }.disabled(model.translating)
+                }
             } header: { Text("应用兼容性") }
             Section {
                 ExcludedApplicationsView(bundleIDs: $model.settings.excludedBundleIDs)

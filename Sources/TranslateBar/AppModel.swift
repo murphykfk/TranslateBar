@@ -303,6 +303,18 @@ import TranslateCore
         do { try translationCache.clear(); lastMessage = "已清空本地翻译缓存。" }
         catch { lastMessage = error.localizedDescription }
     }
+    func copyCompatibilityDiagnostic() {
+        do {
+            guard let text = try ReplacementDiagnostics.lastFailureJSON() else {
+                lastMessage = "暂无兼容性诊断，请先在出现问题的应用中重现一次，再返回复制。"
+                return
+            }
+            let board = NSPasteboard.general
+            board.clearContents()
+            guard board.setString(text, forType: .string) else { lastMessage = "诊断复制失败，请重试。"; return }
+            lastMessage = "已复制最近一次失败的兼容性诊断，不含原文或 API Key。"
+        } catch { lastMessage = "无法复制兼容性诊断，请重新触发一次失败后重试。" }
+    }
     private func beginTranslation(_ text: String, target: String, snapshot: TextSnapshot?, replace: Bool, test: Bool = false, selection: Bool = false, feedbackID: UUID? = nil) {
         guard settings.enabled, !translating else { return }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {

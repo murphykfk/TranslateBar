@@ -28,10 +28,13 @@ import TranslateCore
             let modal: Bool = AccessibleText.attribute(context.window, kAXModalAttribute) ?? false
             ReplacementDiagnostics.note("word_body_guard", ["role_supported": ["AXLayoutArea", "AXTextArea"].contains(role) ? 1 : 0,
                 "enabled": enabled.map { $0 ? 1 : 0 } ?? -1, "editable": editable.map { $0 ? 1 : 0 } ?? -1, "modal": modal ? 1 : 0])
-            guard ["AXLayoutArea", "AXTextArea"].contains(role), enabled == true, editable != false, !modal else {
-                throw AppError.message("Word 当前正文不可编辑。请检查文档是否只读、受保护或尚未激活，再将光标放回正文。")
+            guard WordTextRules.permitsBody(bundleID: NSRunningApplication(processIdentifier: context.pid)?.bundleIdentifier ?? "",
+                role: role, enabled: enabled, explicitlyEditable: editable, secure: AccessibleText.isSecure(context.element), modal: modal) else {
+                ReplacementDiagnostics.fail("word_body_focus_unverified")
+                throw AppError.message("未确认 Word 正文焦点，请点击正文后重试。原文未改动。")
             }
             guard let paste = command("paste:", pid: context.pid) else {
+                ReplacementDiagnostics.fail("word_paste_command_missing")
                 throw AppError.message("未确认 Word 正文的粘贴能力，请将光标放回正文后重试，或使用划词翻译。")
             }
             // A disabled Paste command can also mean an empty clipboard. Use
@@ -41,11 +44,14 @@ import TranslateCore
             await OfficeText.pause(0.04)
             try ClipboardText.validate(context)
             try TextInputGate.check()
+            let pasteEnabled: Bool? = AccessibleText.attribute(paste, kAXEnabledAttribute)
+            ReplacementDiagnostics.note("word_paste_check", ["enabled": pasteEnabled.map { $0 ? 1 : 0 } ?? -1])
             guard WordTextRules.permitsInput(bundleID: NSRunningApplication(processIdentifier: context.pid)?.bundleIdentifier ?? "",
                 role: role, enabled: enabled, explicitlyEditable: editable,
-                pasteEnabled: AccessibleText.attribute(paste, kAXEnabledAttribute),
+                pasteEnabled: pasteEnabled,
                 secure: AccessibleText.isSecure(context.element), modal: modal) else {
-                throw AppError.message("Word 当前不允许粘贴，请检查文档的只读、保护或激活状态。原文未改动。")
+                ReplacementDiagnostics.fail("word_paste_unavailable")
+                throw AppError.message("未确认 Word 当前“粘贴”命令可用，请点击可编辑正文后重试。原文未改动。")
             }
             ReplacementDiagnostics.note("word_edit_capability_verified")
             return paste
@@ -53,8 +59,10 @@ import TranslateCore
     }
 
     static func validateSelectedInput(_ context: ClipboardTextContext) throws {
-        guard let cut = command("cut:", pid: context.pid),
-              (AccessibleText.attribute(cut, kAXEnabledAttribute) as Bool?) == true else {
+        let cut = command("cut:", pid: context.pid)
+        let enabled: Bool? = cut.flatMap { AccessibleText.attribute($0, kAXEnabledAttribute) }
+        ReplacementDiagnostics.note("word_selection_edit_check", ["command_available": cut != nil ? 1 : 0, "enabled": enabled.map { $0 ? 1 : 0 } ?? -1])
+        guard enabled == true else {
             ReplacementDiagnostics.fail("word_selection_not_editable")
             throw AppError.message("Word 当前选区不允许编辑，请检查文档保护状态。原文未改动。")
         }

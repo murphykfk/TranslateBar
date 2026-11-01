@@ -37,6 +37,16 @@ import Foundation
         current = report
         if !success { try? LocalFiles.write(report, to: LocalFiles.directory.appendingPathComponent("replacement-diagnostic.json")) }
     }
+    static func lastFailureJSON(from url: URL = LocalFiles.directory.appendingPathComponent("replacement-diagnostic.json")) throws -> String? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let size = (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
+        guard size <= 64 * 1024 else { throw AppError.message("兼容性诊断文件过大，未复制。请重新触发一次失败后重试。") }
+        // Decode the numeric report schema and encode it again. Never copy
+        // arbitrary files or add document text, clipboard contents or keys.
+        let report = try LocalFiles.read(Report.self, from: url)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
+        return String(decoding: try encoder.encode(report), as: UTF8.self)
+    }
     static var failureHint: String? {
         switch latestFailure {
         case "input_revision":

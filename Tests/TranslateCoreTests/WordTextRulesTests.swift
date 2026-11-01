@@ -8,25 +8,33 @@ final class WordTextRulesTests: XCTestCase {
         XCTAssertFalse(WordTextRules.usesDocumentFallback(bundleID: "com.microsoft.Word", role: "AXTextField"))
         XCTAssertFalse(WordTextRules.usesDocumentFallback(bundleID: "com.apple.TextEdit", role: "AXTextArea"))
     }
-    func testWordCanvasRequiresEnabledPasteWithoutWritableAXText() {
+    func testWordCanvasUsesEditingCommandsRatherThanPresentationFlags() {
         for role in ["AXLayoutArea", "AXTextArea"] {
-            XCTAssertTrue(WordTextRules.permitsInput(bundleID: "com.microsoft.Word", role: role, enabled: true, explicitlyEditable: nil, pasteEnabled: true, secure: false, modal: false))
+            for enabled: Bool? in [true, false, nil] {
+                for editable: Bool? in [true, false, nil] {
+                    XCTAssertTrue(WordTextRules.permitsInput(bundleID: "com.microsoft.Word", role: role, enabled: enabled, explicitlyEditable: editable, pasteEnabled: true, secure: false, modal: false))
+                }
+            }
         }
         for role in ["AXWindow", "AXGroup", "AXButton", "AXComboBox", "AXTextField", "AXToolbar", "AXStaticText"] {
             XCTAssertFalse(WordTextRules.permitsInput(bundleID: "com.microsoft.Word", role: role, enabled: true, explicitlyEditable: true, pasteEnabled: true, secure: false, modal: false))
         }
         XCTAssertFalse(WordTextRules.permitsInput(bundleID: "com.microsoft.Excel", role: "AXLayoutArea", enabled: true, explicitlyEditable: true, pasteEnabled: true, secure: false, modal: false))
     }
-    func testReadonlyDisabledUnknownProtectedAndModalContextsStayBlocked() {
-        for enabled: Bool? in [false, nil] {
-            XCTAssertFalse(WordTextRules.permitsInput(bundleID: "com.microsoft.Word", role: "AXLayoutArea", enabled: enabled, explicitlyEditable: nil, pasteEnabled: true, secure: false, modal: false))
-        }
+    func testReadonlyUnknownPasteProtectedAndModalContextsStayBlocked() {
         for paste: Bool? in [false, nil] {
             XCTAssertFalse(WordTextRules.permitsInput(bundleID: "com.microsoft.Word", role: "AXLayoutArea", enabled: true, explicitlyEditable: nil, pasteEnabled: paste, secure: false, modal: false))
         }
-        XCTAssertFalse(WordTextRules.permitsInput(bundleID: "com.microsoft.Word", role: "AXLayoutArea", enabled: true, explicitlyEditable: false, pasteEnabled: true, secure: false, modal: false))
         XCTAssertFalse(WordTextRules.permitsInput(bundleID: "com.microsoft.Word", role: "AXLayoutArea", enabled: true, explicitlyEditable: nil, pasteEnabled: true, secure: true, modal: false))
         XCTAssertFalse(WordTextRules.permitsInput(bundleID: "com.microsoft.Word", role: "AXLayoutArea", enabled: true, explicitlyEditable: nil, pasteEnabled: true, secure: false, modal: true))
+    }
+    func testReportedDisabledCanvasIsAllowedOnlyWhenWordPasteIsAvailable() {
+        // Report from 0.4.7: role_supported=1, enabled=0, editable=-1, modal=0.
+        XCTAssertTrue(WordTextRules.permitsBody(bundleID: "com.microsoft.Word", role: "AXLayoutArea", enabled: false, explicitlyEditable: nil, secure: false, modal: false))
+        XCTAssertTrue(WordTextRules.permitsInput(bundleID: "com.microsoft.Word", role: "AXLayoutArea", enabled: false, explicitlyEditable: nil, pasteEnabled: true, secure: false, modal: false))
+        for unavailable: Bool? in [false, nil] {
+            XCTAssertFalse(WordTextRules.permitsInput(bundleID: "com.microsoft.Word", role: "AXLayoutArea", enabled: false, explicitlyEditable: nil, pasteEnabled: unavailable, secure: false, modal: false))
+        }
     }
     func testSingleParagraphIncludingWrappedTextNeedsNoCharacterStepping() throws {
         let text = String(repeating: "正文", count: 600) + "   "

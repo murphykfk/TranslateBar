@@ -13,9 +13,12 @@ public enum WordTextRules {
             && pasteEnabled == true
     }
 
-    public static func permitsBody(bundleID: String, role: String, enabled: Bool?, explicitlyEditable: Bool?, secure: Bool, modal: Bool) -> Bool {
+    /// Word's canvas can report AXEnabled=false while accepting keyboard edits.
+    /// These canvas hints do not authorize or reject edits; Paste and selected
+    /// Cut availability are checked separately before any replacement.
+    public static func permitsBody(bundleID: String, role: String, enabled _: Bool?, explicitlyEditable _: Bool?, secure: Bool, modal: Bool) -> Bool {
         usesDocumentFallback(bundleID: bundleID, role: role)
-            && enabled == true && explicitlyEditable != false && !secure && !modal
+            && !secure && !modal
     }
 
     public enum SelectionAdjustment: Equatable {
