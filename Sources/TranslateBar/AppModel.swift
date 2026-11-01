@@ -249,7 +249,12 @@ import TranslateCore
     }
     private func captureText(input: Bool, quiet: Bool) {
         translating = true
-        if input { ReplacementDiagnostics.beginCapture() }
+        if input {
+            ReplacementDiagnostics.beginCapture()
+            let bundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+            ReplacementDiagnostics.note("capture_application", ["document": MicrosoftTextRules.document(bundleID: bundle)?.rawValue ?? 0,
+                "wps": bundle == OfficeText.bundleID ? 1 : 0])
+        }
         let feedbackID = input && settings.inputFeedbackEnabled ? inputFeedback.begin(pid: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0) : nil
         if feedbackID != nil { showInputFeedback?() }
         translationTask = Task {
@@ -257,6 +262,7 @@ import TranslateCore
                 let snapshot: TextSnapshot
                 do { snapshot = try input ? AccessibleText.input(settings: settings) : AccessibleText.selected(settings: settings) }
                 catch {
+                    if input { ReplacementDiagnostics.note("direct_input_unavailable") }
                     if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == OfficeText.bundleID {
                         guard settings.wpsCompatibilityEnabled, !settings.excludes(OfficeText.bundleID) else { throw error }
                         lastMessage = input ? "正在读取 WPS 当前段落…" : "正在读取 WPS 选中文字…"

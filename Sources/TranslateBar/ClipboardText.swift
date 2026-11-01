@@ -9,7 +9,8 @@ struct ClipboardTextContext {
     let title: String
     let revision: UInt64
     var windowOnlyFocus = false
-    var wordPasteCommand: AXUIElement?
+    var microsoftDocument: MicrosoftTextRules.Document?
+    var documentPasteCommand: AXUIElement?
 }
 struct ClipboardTextSnapshot {
     let context: ClipboardTextContext
@@ -25,12 +26,20 @@ struct ClipboardTextSnapshot {
         let pid = owner.processIdentifier
         let app = AXUIElementCreateApplication(pid)
         guard let window: AXUIElement = AccessibleText.attribute(app, kAXFocusedWindowAttribute),
-              (AccessibleText.attribute(window, kAXRoleAttribute) as String?) == kAXWindowRole else { throw AppError.message("当前窗口无法安全取词。") }
+              (AccessibleText.attribute(window, kAXRoleAttribute) as String?) == kAXWindowRole else {
+            ReplacementDiagnostics.fail("clipboard_window_unavailable")
+            throw AppError.message("当前窗口无法安全取词。")
+        }
         let title: String = AccessibleText.attribute(window, kAXTitleAttribute) ?? ""
         let focused = TextFocus.resolve(pid: pid, wakeAccessibility: settings.enhancedCompatibility)
         if let focused, !TextFocus.isContainer(focused) || owner.bundleIdentifier != "com.tencent.xinWeChat" {
             guard !AccessibleText.isSecure(focused) else { throw AppError.message("密码输入框不参与翻译。") }
-            let element = owner.bundleIdentifier == WordTextRules.bundleID ? WordText.bodyElement(focused) ?? focused : focused
+            let element = MicrosoftTextRules.document(bundleID: owner.bundleIdentifier ?? "") != nil ? MicrosoftText.bodyElement(focused) ?? focused : focused
+            let role: String = AccessibleText.attribute(element, kAXRoleAttribute) ?? ""
+            ReplacementDiagnostics.note("clipboard_focus", ["document": MicrosoftTextRules.document(bundleID: owner.bundleIdentifier ?? "")?.rawValue ?? 0,
+                "text_role": TextCompatibilityRules.isTextRole(role) ? 1 : 0, "layout_role": role == "AXLayoutArea" ? 1 : 0,
+                "editable": AccessibleText.canEdit(element) ? 1 : 0,
+                "enabled": (AccessibleText.attribute(element, kAXEnabledAttribute) as Bool?).map { $0 ? 1 : 0 } ?? -1])
             return ClipboardTextContext(element: element, window: window, pid: pid, title: title, revision: TextInteraction.revision)
         }
         guard settings.enhancedCompatibility, permitsWindowOnly(owner: owner, window: window, title: title),
@@ -61,8 +70,8 @@ struct ClipboardTextSnapshot {
         guard let window: AXUIElement = AccessibleText.attribute(app, kAXFocusedWindowAttribute), CFEqual(window, expected.window),
               (AccessibleText.attribute(window, kAXTitleAttribute) as String? ?? "") == expected.title else { throw TextReplacementError.changed }
         let focused = TextFocus.resolve(pid: expected.pid)
-        let element = NSRunningApplication(processIdentifier: expected.pid)?.bundleIdentifier == WordTextRules.bundleID
-            ? focused.map { WordText.bodyElement($0) ?? $0 } : focused
+        let element = MicrosoftTextRules.document(bundleID: NSRunningApplication(processIdentifier: expected.pid)?.bundleIdentifier ?? "") != nil
+            ? focused.map { MicrosoftText.bodyElement($0) ?? $0 } : focused
         if expected.windowOnlyFocus {
             guard let owner = NSRunningApplication(processIdentifier: expected.pid),
                   permitsWindowOnly(owner: owner, window: window, title: expected.title) else { throw TextReplacementError.changed }
@@ -73,12 +82,11 @@ struct ClipboardTextSnapshot {
             }
         } else {
             guard let element, CFEqual(element, expected.element), !AccessibleText.isSecure(element) else { throw TextReplacementError.changed }
-            if expected.wordPasteCommand != nil {
+            if expected.documentPasteCommand != nil {
                 // Paste can be disabled solely because the user's clipboard
                 // is empty. Check its actual state after staging paste data.
-                guard WordTextRules.permitsBody(bundleID: NSRunningApplication(processIdentifier: expected.pid)?.bundleIdentifier ?? "",
-                    role: AccessibleText.attribute(element, kAXRoleAttribute) ?? "", enabled: AccessibleText.attribute(element, kAXEnabledAttribute),
-                    explicitlyEditable: AccessibleText.attribute(element, "AXEditable"),
+                guard MicrosoftTextRules.permitsBody(bundleID: NSRunningApplication(processIdentifier: expected.pid)?.bundleIdentifier ?? "",
+                    role: AccessibleText.attribute(element, kAXRoleAttribute) ?? "",
                     secure: AccessibleText.isSecure(element), modal: AccessibleText.attribute(window, kAXModalAttribute) ?? false) else { throw TextReplacementError.changed }
             }
         }
@@ -93,10 +101,14 @@ struct ClipboardTextSnapshot {
             try validate(context)
             try Task.checkCancellation()
             if let text = transaction.takeCopiedRichText() {
-                guard (allowingWhitespace ? !text.string.isEmpty : !text.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty), text.string.utf8.count <= 60_000 else { throw AppError.message("未复制到有效文字，或选区超过 60 KB。") }
+                guard (allowingWhitespace ? !text.string.isEmpty : !text.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty), text.string.utf8.count <= 60_000 else {
+                    ReplacementDiagnostics.fail("clipboard_copy_empty_or_oversized")
+                    throw AppError.message("未复制到有效文字，或选区超过 60 KB。")
+                }
                 return text
             }
         }
+        ReplacementDiagnostics.fail("clipboard_copy_unavailable")
         throw AppError.message("此控件未提供可复制文字；图片和扫描件不参与翻译。")
     }
     static func prefix(_ context: ClipboardTextContext, collapse: Bool) async throws -> NSAttributedString {
@@ -109,11 +121,11 @@ struct ClipboardTextSnapshot {
         do {
             let copied = try await selectPrefix(context)
             try TextInputGate.check()
-            if context.windowOnlyFocus || context.wordPasteCommand != nil {
+            if context.windowOnlyFocus || context.documentPasteCommand != nil {
                 await restoreCaret(context, original: nil)
                 selectionPending = false
                 try await verifyCaret(context, line: copied.string)
-                ReplacementDiagnostics.note(context.wordPasteCommand == nil ? "wechat_caret_verified" : "word_caret_verified")
+                ReplacementDiagnostics.note(context.microsoftDocument.map { "\($0.diagnosticPrefix)_caret_verified" } ?? "wechat_caret_verified")
                 if !collapse {
                     selectionPending = true
                     let selected = try await selectPrefix(context)
@@ -128,13 +140,19 @@ struct ClipboardTextSnapshot {
         }
     }
     private static func selectPrefix(_ context: ClipboardTextContext) async throws -> NSAttributedString {
-        OfficeText.key(context.wordPasteCommand == nil ? 123 : 126, flags: [.maskCommand, .maskShift], to: context.pid)
+        let modifier: CGEventFlags = context.microsoftDocument.map {
+            MicrosoftTextRules.paragraphModifier(for: $0) == .command ? .maskCommand : .maskAlternate
+        } ?? .maskCommand
+        OfficeText.key(context.documentPasteCommand == nil ? 123 : 126, flags: [modifier, .maskShift], to: context.pid)
         await OfficeText.pause(0.04)
         var copied = try await copy(context)
-        if context.wordPasteCommand != nil {
+        if let document = context.microsoftDocument {
             let selection: WordTextRules.PrefixSelection
             do { selection = try WordTextRules.prefixSelection(in: copied.string) }
-            catch { throw AppError.message("Word 当前段落包含无法可靠定位的结构，请改用划词翻译。原文未改动。") }
+            catch {
+                ReplacementDiagnostics.fail("\(document.diagnosticPrefix)_paragraph_structure")
+                throw AppError.message("\(document.name) 当前段落包含无法可靠定位的结构，请改用划词翻译。原文未改动。")
+            }
             let expected = copied.attributedSubstring(from: selection.range)
             let key: CGKeyCode, count: Int
             switch selection.adjustment {
@@ -153,8 +171,8 @@ struct ClipboardTextSnapshot {
                 copied = try await copy(context)
                 guard copied.string == expected.string else { throw TextReplacementError.changed }
             }
-            try WordText.validateSelectedInput(context)
-            ReplacementDiagnostics.note("word_prefix_verified", ["length": copied.length, "selection_steps": count])
+            try MicrosoftText.validateSelectedInput(context)
+            ReplacementDiagnostics.note("\(document.diagnosticPrefix)_prefix_verified", ["length": copied.length, "selection_steps": count])
         }
         guard TextCompatibilityRules.isSingleTextLine(copied.string) else { throw AppError.message("此编辑器无法安全定位当前段落，请使用划词翻译。") }
         return copied
@@ -201,12 +219,17 @@ struct ClipboardTextSnapshot {
     }
     static func input(settings: AppSettings) async throws -> TextSnapshot {
         var context = try context(settings: settings)
-        if NSRunningApplication(processIdentifier: context.pid)?.bundleIdentifier == WordTextRules.bundleID {
-            guard settings.enhancedCompatibility else { throw AppError.message("请开启“增强取词与回填兼容”，以使用 Word 正文输入翻译。") }
-            context.wordPasteCommand = try await WordText.prepareInput(context)
-        }
         let role: String = AccessibleText.attribute(context.element, kAXRoleAttribute) ?? ""
-        guard context.windowOnlyFocus || context.wordPasteCommand != nil || TextCompatibilityRules.permitsLineFallback(role: role, editable: AccessibleText.canEdit(context.element), enabled: AccessibleText.attribute(context.element, kAXEnabledAttribute), secure: AccessibleText.isSecure(context.element)) else { throw AppError.message("当前控件未提供安全的编辑能力，请改用划词翻译。") }
+        let bundle = NSRunningApplication(processIdentifier: context.pid)?.bundleIdentifier ?? ""
+        if let document = MicrosoftTextRules.document(bundleID: bundle), MicrosoftTextRules.usesDocumentFallback(bundleID: bundle, role: role) {
+            guard settings.enhancedCompatibility else { throw AppError.message("请开启“增强取词与回填兼容”，以使用 \(document.name) 文字输入翻译。") }
+            context.microsoftDocument = document
+            context.documentPasteCommand = try await MicrosoftText.prepareInput(context, document: document)
+        }
+        guard context.windowOnlyFocus || context.documentPasteCommand != nil || TextCompatibilityRules.permitsLineFallback(role: role, editable: AccessibleText.canEdit(context.element), enabled: AccessibleText.attribute(context.element, kAXEnabledAttribute), secure: AccessibleText.isSecure(context.element)) else {
+            ReplacementDiagnostics.fail("clipboard_edit_capability_unavailable")
+            throw AppError.message("当前控件未提供安全的编辑能力，请改用划词翻译。")
+        }
         let text = try await prefix(context, collapse: true)
         if context.windowOnlyFocus {
             guard ChatDraftCompatibility.containsTrigger(text.string, spaces: settings.spaceCount) else {
@@ -214,17 +237,24 @@ struct ClipboardTextSnapshot {
                 throw AppError.message("未确认微信输入草稿，请在聊天输入框完成文字后，按设置次数连续空格。原文未改动。")
             }
         }
-        if context.wordPasteCommand != nil {
-            guard ChatDraftCompatibility.containsTrigger(text.string, spaces: settings.spaceCount) else { throw AppError.message("未确认 Word 当前输入段落，请在句末按设置次数连续空格。原文未改动。") }
+        if let document = context.microsoftDocument {
+            guard ChatDraftCompatibility.containsTrigger(text.string, spaces: settings.spaceCount) else {
+                ReplacementDiagnostics.fail("\(document.diagnosticPrefix)_trigger_not_verified")
+                throw AppError.message("未确认 \(document.name) 当前输入段落，请在句末按设置次数连续空格。原文未改动。")
+            }
             guard text.length > 0, text.attribute(.font, at: 0, effectiveRange: nil) is NSFont else {
-                throw AppError.message("Word 未提供可核实的字号与粗细，原文未改动。请改用划词翻译。")
+                ReplacementDiagnostics.fail("\(document.diagnosticPrefix)_font_unavailable")
+                throw AppError.message("\(document.name) 未提供可核实的字号与粗细，原文未改动。请改用划词翻译。")
             }
         }
         // Reject mixed font/weight before using the translation service.
         if text.attribute(.font, at: 0, effectiveRange: nil) is NSFont {
             do { _ = try RichTextReplacement.translated("Local format check", preserving: text, removingTriggerSpaces: false) }
             catch {
-                if context.wordPasteCommand != nil { throw AppError.message("Word 当前段落的混合格式无法安全保留，原文未改动。请改用划词翻译。") }
+                if let document = context.microsoftDocument {
+                    ReplacementDiagnostics.fail("\(document.diagnosticPrefix)_mixed_format")
+                    throw AppError.message("\(document.name) 当前段落的混合格式无法安全保留，原文未改动。请改用划词翻译。")
+                }
                 throw error
             }
         }
@@ -268,11 +298,11 @@ struct ClipboardTextSnapshot {
         try validate(context)
         let transaction = TemporaryClipboard(text: text)
         defer { transaction.restore() }
-        if let paste = context.wordPasteCommand {
+        if let paste = context.documentPasteCommand {
             await OfficeText.pause(0.04)
             try validate(context); try TextInputGate.check()
             guard (AccessibleText.attribute(paste, kAXEnabledAttribute) as Bool?) == true else {
-                throw AppError.message("Word 已不允许粘贴，原文未改动，译文已保留。")
+                throw AppError.message("\(context.microsoftDocument?.name ?? "当前编辑器") 已不允许粘贴，原文未改动，译文已保留。")
             }
         }
         OfficeText.key(9, flags: .maskCommand, to: context.pid)

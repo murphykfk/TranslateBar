@@ -49,6 +49,10 @@ open .build/CompatibilityFixture.app
 
 常规设置可复制最近一次失败的兼容性诊断。导出时只解码并重编码既有数值报告结构，未知字段不会导出；无报告、损坏或超大文件均有单独处理。相关测试覆盖用户报告的画布状态组合与诊断导出，不调用真实 API。
 
+0.4.9 将 Word 的命令核验封装为 `MicrosoftText`，增加 Microsoft PowerPoint（`com.microsoft.Powerpoint`）文字画布路径。PowerPoint 使用 **Option+Shift+Up** 选择光标前当前段落；不能复用 Word 的 Command+Shift+Up，后者在 PowerPoint 中选到文字对象起点。依据 [微软 PowerPoint macOS 快捷键说明](https://support.microsoft.com/en-us/accessibility/powerpoint/use-keyboard-shortcuts-to-create-powerpoint-presentations)。沿用换行后缀缩选、精确复读、单字符光标核验、触发空格、字号和粗细检查及回填前的粘贴命令检查。
+
+PowerPoint 在发送任何选区方向键前，还要求初始 Copy、Cut 命令均明确禁用，拒绝已选中对象或不明命令状态；对象选中时的 Shift+方向键会调整对象尺寸，不能用于文字探测。随后建立的文字选区必须可复制且可编辑，并核对触发空格和字体。普通工具栏文本框保留通用路径，WPS、Excel、Keynote 不扩大范围。诊断增加应用类别和焦点能力数值及具体失败阶段，不记录标题或文字。本机 PowerPoint 未激活，只检查了只读画布与菜单命令接口，未将其记为可编辑 PowerPoint 实机通过。
+
 ## 数据与密钥
 
 正常应用从钥匙串读取用户在设置中保存的 Key，不读取项目 `.env`，不依赖开发机绝对路径。源码仍保留显式的旧项目密钥迁移命令，供已有开发配置手动迁移；普通用户无需使用。

@@ -153,7 +153,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
             } header: { Text("本地缓存") } footer: { note("输入与划词翻译共用，重启后保留。原文、目标语言、原文语言设置和模型一致时直接复用，不调用 API。关闭后保留已有缓存；清空会删除本机保存的原文和译文。译声不缓存。") }
             Section {
                 Toggle("增强取词与回填兼容", isOn: $model.settings.enhancedCompatibility)
-                note("优先使用系统文本接口；无法取词时临时复制选区并恢复剪贴板。Word 正文会额外检查可编辑状态及换行边界；其他兼容控件仅替换光标前当前行。不全选整个页面，密码框与排除的应用始终跳过。")
+                note("优先使用系统文本接口；无法取词时临时复制选区并恢复剪贴板。Word 正文与 PowerPoint 文字会额外检查编辑命令及段落边界；PowerPoint 需进入文字内部，不能只选中对象边框。其他兼容控件仅替换光标前当前行。密码框与排除的应用始终跳过。")
                 Toggle("WPS 文字兼容模式", isOn: $model.settings.wpsCompatibilityEnabled)
                 note("WPS 正文无法直接取词时，通过临时复制读取所选文字并恢复剪贴板。输入翻译只处理光标之前的当前段落，不整篇覆盖；正文的字号与粗细会保留。")
                 HStack {

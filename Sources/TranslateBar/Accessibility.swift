@@ -211,10 +211,10 @@ struct TextElementIdentity {
               (attribute(element, kAXEnabledAttribute) as Bool?) != false else { throw AppError.message("当前控件不可编辑，已跳过。") }
         let role: String = attribute(element, kAXRoleAttribute) ?? ""
         let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
-        // Word can expose AXTextArea only after its canvas is initialized.
+        // Office can expose AXTextArea only after its canvas is initialized.
         // Keep the same verified paragraph/soft-break scope in both states.
-        if WordTextRules.usesDocumentFallback(bundleID: bundle, role: role) {
-            throw AppError.message("Word 正文需要通过兼容路径回填，请开启“增强取词与回填兼容”。")
+        if MicrosoftTextRules.usesDocumentFallback(bundleID: bundle, role: role) {
+            throw AppError.message("Office 正文需要通过兼容路径回填，请开启“增强取词与回填兼容”。")
         }
         guard canEdit(element) else { throw AppError.message("当前控件不可编辑，已跳过。") }
         // Chromium block editors expose AXValue with paragraph separators that
