@@ -4,9 +4,24 @@ import TranslateCore
 /// Office canvases may lack writable AX text. Verify editing commands and
 /// current paragraph text; never infer editability from a disabled canvas.
 @MainActor enum MicrosoftText {
+    static func excelEditingElement(pid: pid_t) -> AXUIElement? {
+        let app = AXUIElementCreateApplication(pid)
+        guard let window: AXUIElement = AccessibleText.attribute(app, kAXFocusedWindowAttribute),
+              let children: [AXUIElement] = AccessibleText.attribute(window, kAXChildrenAttribute) else { return nil }
+        func child(_ id: String) -> AXUIElement? {
+            children.first { (AccessibleText.attribute($0, kAXIdentifierAttribute) as String?) == id }
+        }
+        guard let enter = child("EnterButton"), let cancel = child("CancelButton"),
+              (AccessibleText.attribute(enter, kAXEnabledAttribute) as Bool?) == true,
+              (AccessibleText.attribute(cancel, kAXEnabledAttribute) as Bool?) == true,
+              let editor = child("XLFormulaEditor"),
+              AccessibleText.selectedRange(editor) != nil, AccessibleText.textValue(editor) != nil else { return nil }
+        return editor
+    }
     static func bodyElement(_ focused: AXUIElement) -> AXUIElement? {
         let role: String = AccessibleText.attribute(focused, kAXRoleAttribute) ?? ""
         guard ["AXLayoutArea", "AXTextArea"].contains(role) else { return nil }
+        if (AccessibleText.attribute(focused, kAXIdentifierAttribute) as String?) == "XLFormulaEditor" { return focused }
         var node = focused
         for _ in 0..<10 {
             let role: String = AccessibleText.attribute(node, kAXRoleAttribute) ?? ""

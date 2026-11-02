@@ -5,6 +5,9 @@ import Carbon
 
 @main struct TranslateBarMain {
     @MainActor static func main() async {
+        if CommandLine.arguments.contains("--microsoft-office-selection-test") { await MicrosoftOfficeSmokeTest.run(inspectOnly: false, selectionOnly: true); return }
+        if CommandLine.arguments.contains("--microsoft-office-read-test") { await MicrosoftOfficeSmokeTest.run(inspectOnly: true); return }
+        if CommandLine.arguments.contains("--microsoft-office-smoke-test") { await MicrosoftOfficeSmokeTest.run(inspectOnly: false); return }
         if CommandLine.arguments.contains("--compatibility-smoke-test") { await CompatibilitySmokeTest.run(); return }
         if CommandLine.arguments.contains("--compatibility-gate-smoke-test") { await CompatibilitySmokeTest.gate(); return }
         if CommandLine.arguments.contains("--office-diagnostics") { OfficeText.diagnostics(); return }

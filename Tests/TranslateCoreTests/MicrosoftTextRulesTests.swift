@@ -12,7 +12,7 @@ final class MicrosoftTextRulesTests: XCTestCase {
         for role in ["AXImage", "AXGroup", "AXCollection", "AXList", "AXWindow", "AXButton", "AXTextField", "AXToolbar", "AXUnknown"] {
             XCTAssertFalse(MicrosoftTextRules.usesDocumentFallback(bundleID: "com.microsoft.Powerpoint", role: role))
         }
-        for bundle in ["com.microsoft.Excel", "com.apple.Keynote", "com.kingsoft.wpsoffice.mac", "com.microsoft.PowerPoint", ""] {
+        for bundle in ["com.apple.Keynote", "com.kingsoft.wpsoffice.mac", "com.microsoft.PowerPoint", ""] {
             XCTAssertNil(MicrosoftTextRules.document(bundleID: bundle))
             XCTAssertFalse(MicrosoftTextRules.usesDocumentFallback(bundleID: bundle, role: "AXLayoutArea"))
         }

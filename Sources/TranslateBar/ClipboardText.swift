@@ -82,6 +82,17 @@ struct ClipboardTextSnapshot {
             }
         } else {
             guard let element, CFEqual(element, expected.element), !AccessibleText.isSecure(element) else { throw TextReplacementError.changed }
+            if expected.microsoftDocument == .excel {
+                let editor = MicrosoftText.excelEditingElement(pid: expected.pid)
+                let value = editor.flatMap { AccessibleText.textValue($0) }
+                ReplacementDiagnostics.note("excel_edit_state", ["editor": editor == nil ? 0 : 1,
+                    "same": editor.map { CFEqual(element, $0) ? 1 : 0 } ?? 0,
+                    "text": value.map { MicrosoftTextRules.permitsExcelText($0) ? 1 : 0 } ?? -1])
+                guard let editor, CFEqual(element, editor), let value, MicrosoftTextRules.permitsExcelText(value) else {
+                    ReplacementDiagnostics.fail("excel_text_edit_unverified")
+                    throw AppError.message("请进入 Excel 文本单元格的编辑状态后重试；公式不参与输入翻译。原文未改动。")
+                }
+            }
             if expected.documentPasteCommand != nil {
                 // Paste can be disabled solely because the user's clipboard
                 // is empty. Check its actual state after staging paste data.
@@ -105,6 +116,17 @@ struct ClipboardTextSnapshot {
                     ReplacementDiagnostics.fail("clipboard_copy_empty_or_oversized")
                     throw AppError.message("未复制到有效文字，或选区超过 60 KB。")
                 }
+                // PowerPoint exports a paragraph terminator even for a partial
+                // text selection. Its AX range can also include a virtual final
+                // marker one character beyond AXValue. Trim only after matching
+                // the actual text selection; genuine selected breaks remain.
+                if NSRunningApplication(processIdentifier: context.pid)?.bundleIdentifier == "com.microsoft.Powerpoint",
+                   let focused = TextFocus.resolve(pid: context.pid),
+                   let value = AccessibleText.textValue(focused), let range = AccessibleText.selectedRange(focused),
+                   let expected = MicrosoftTextRules.powerPointCopiedText(value: value, range: range, copied: text.string),
+                   let matched = ClipboardRichText.matching(expected, rich: text) {
+                    return matched
+                }
                 return text
             }
         }
@@ -116,13 +138,15 @@ struct ClipboardTextSnapshot {
     }
     private static func protectedPrefix(_ context: ClipboardTextContext, collapse: Bool) async throws -> NSAttributedString {
         try validate(context)
-        let originalRange = AccessibleText.selectedRange(context.element)
+        let originalRange = context.microsoftDocument != nil
+            ? TextFocus.resolve(pid: context.pid).flatMap { AccessibleText.selectedRange($0) }
+            : AccessibleText.selectedRange(context.element)
         var selectionPending = true
         do {
             let copied = try await selectPrefix(context)
             try TextInputGate.check()
             if context.windowOnlyFocus || context.documentPasteCommand != nil {
-                await restoreCaret(context, original: nil)
+                await restoreCaret(context, original: originalRange)
                 selectionPending = false
                 try await verifyCaret(context, line: copied.string)
                 ReplacementDiagnostics.note(context.microsoftDocument.map { "\($0.diagnosticPrefix)_caret_verified" } ?? "wechat_caret_verified")
@@ -140,12 +164,67 @@ struct ClipboardTextSnapshot {
         }
     }
     private static func selectPrefix(_ context: ClipboardTextContext) async throws -> NSAttributedString {
+        let originalCaret = TextFocus.resolve(pid: context.pid).flatMap { AccessibleText.selectedRange($0) }
         let modifier: CGEventFlags = context.microsoftDocument.map {
             MicrosoftTextRules.paragraphModifier(for: $0) == .command ? .maskCommand : .maskAlternate
         } ?? .maskCommand
-        OfficeText.key(context.documentPasteCommand == nil ? 123 : 126, flags: [modifier, .maskShift], to: context.pid)
+        if context.microsoftDocument == .excel {
+            OfficeText.key(115, flags: .maskShift, to: context.pid) // Shift-Home; Command-Left selects a word in Excel.
+        } else {
+            OfficeText.key(context.documentPasteCommand == nil ? 123 : 126, flags: [modifier, .maskShift], to: context.pid)
+        }
         await OfficeText.pause(0.04)
         var copied = try await copy(context)
+        if context.microsoftDocument == .powerPoint {
+            let selected = TextFocus.resolve(pid: context.pid).flatMap { AccessibleText.selectedRange($0) }
+            ReplacementDiagnostics.note("powerpoint_selection_bounds", ["caret": originalCaret?.location ?? -1, "caret_selection": originalCaret?.length ?? -1,
+                "start": selected?.location ?? -1, "length": selected?.length ?? -1, "copied": copied.length])
+        }
+        if context.microsoftDocument == .powerPoint, let originalCaret,
+           let focused = TextFocus.resolve(pid: context.pid), let value = AccessibleText.textValue(focused),
+           let selection = AccessibleText.selectedRange(focused),
+           let range = MicrosoftTextRules.powerPointPrefixRange(value: value, caret: originalCaret, selection: selection, copied: copied.string) {
+            let expected = (value as NSString).substring(with: range)
+            if originalCaret.location < value.utf16.count {
+                // With a following paragraph, the shortcut really includes its
+                // mark. Rebuild a bounded text selection from the proven caret;
+                // PowerPoint's AX range setter cannot reliably do this.
+                guard expected.count <= WordTextRules.maximumSelectionSteps else {
+                    ReplacementDiagnostics.fail("powerpoint_selection_limit")
+                    throw AppError.message("PowerPoint 当前段落过长，无法安全定位，请改用划词翻译。原文未改动。")
+                }
+                OfficeText.key(124, to: context.pid)
+                OfficeText.key(123, to: context.pid)
+                for index in 0..<expected.count {
+                    if index % 16 == 0 { try validate(context); try TextInputGate.check(); try Task.checkCancellation() }
+                    OfficeText.key(123, flags: .maskShift, to: context.pid)
+                    if index % 16 == 15 { await OfficeText.pause(0.01) }
+                }
+                await OfficeText.pause(0.04)
+                copied = try await copy(context)
+                guard AccessibleText.selectedRange(focused) == range else { throw TextReplacementError.changed }
+            }
+            guard let matched = ClipboardRichText.matching(expected, rich: copied) else { throw TextReplacementError.changed }
+            copied = matched
+        }
+        if context.microsoftDocument == .word,
+           let focused = TextFocus.resolve(pid: context.pid),
+           let value = AccessibleText.textValue(focused), let range = AccessibleText.selectedRange(focused),
+           let trimmedRange = MicrosoftTextRules.wordSelectionWithoutParagraphMark(value: value, range: range, copied: copied.string)
+                ?? originalCaret.flatMap({ MicrosoftTextRules.powerPointPrefixRange(value: value, caret: $0, selection: range, copied: copied.string) }) {
+            // Word's paragraph shortcut can select the next paragraph mark
+            // while plain-text Copy omits it. Exclude that proven mark before
+            // collapsing or pasting, so the next paragraph is never joined.
+            var trimmed = CFRange(location: trimmedRange.location, length: trimmedRange.length)
+            guard let parameter = AXValueCreate(.cfRange, &trimmed),
+                  AXUIElementSetAttributeValue(focused, kAXSelectedTextRangeAttribute as CFString, parameter) == .success else { throw TextReplacementError.changed }
+            await OfficeText.pause(0.04)
+            let verified = try await copy(context)
+            let expected = (value as NSString).substring(with: trimmedRange)
+            guard let matched = ClipboardRichText.matching(expected, rich: verified),
+                  AccessibleText.selectedRange(focused) == NSRange(location: trimmed.location, length: trimmed.length) else { throw TextReplacementError.changed }
+            copied = matched
+        }
         if let document = context.microsoftDocument {
             let selection: WordTextRules.PrefixSelection
             do { selection = try WordTextRules.prefixSelection(in: copied.string) }
@@ -180,12 +259,19 @@ struct ClipboardTextSnapshot {
     static func verifyCaret(_ context: ClipboardTextContext, line: String) async throws {
         try await TextInputGate.run(pid: context.pid) {
             try validate(context)
-            let original = AccessibleText.selectedRange(context.element)
+            let original = context.microsoftDocument != nil
+                ? TextFocus.resolve(pid: context.pid).flatMap { AccessibleText.selectedRange($0) }
+                : AccessibleText.selectedRange(context.element)
             OfficeText.key(123, flags: .maskShift, to: context.pid)
-            let character: NSAttributedString
+            var character: NSAttributedString
             do {
                 await OfficeText.pause(0.04)
                 character = try await copy(context, allowingWhitespace: true)
+                if context.microsoftDocument == .powerPoint, let original,
+                   let focused = TextFocus.resolve(pid: context.pid), let value = AccessibleText.textValue(focused),
+                   let selection = AccessibleText.selectedRange(focused),
+                   let range = MicrosoftTextRules.powerPointPrefixRange(value: value, caret: original, selection: selection, copied: character.string),
+                   let matched = ClipboardRichText.matching((value as NSString).substring(with: range), rich: character) { character = matched }
             } catch {
                 await restoreCaret(context, original: original)
                 throw error
@@ -199,9 +285,23 @@ struct ClipboardTextSnapshot {
     }
     private static func restoreCaret(_ context: ClipboardTextContext, original: NSRange?) async {
         guard (try? validate(context)) != nil else { return }
-        if let original {
+        if context.microsoftDocument == .powerPoint, let original, original.length == 0,
+           let focused = TextFocus.resolve(pid: context.pid), let value = AccessibleText.textValue(focused),
+           let selected = AccessibleText.selectedRange(focused), selected.length > 0,
+           NSMaxRange(selected) == original.location + 1, original.location < value.utf16.count,
+           let boundary = Range(NSRange(location: original.location, length: 1), in: value), value[boundary].allSatisfy(\.isNewline) {
+            OfficeText.key(124, to: context.pid)
+            OfficeText.key(123, to: context.pid)
+            await OfficeText.pause(0.04)
+            return
+        }
+        if let original, context.microsoftDocument != .powerPoint {
             var range = CFRange(location: original.location, length: original.length)
-            if let value = AXValueCreate(.cfRange, &range), AXUIElementSetAttributeValue(context.element, kAXSelectedTextRangeAttribute as CFString, value) == .success { return }
+            let element = context.microsoftDocument != nil ? TextFocus.resolve(pid: context.pid) ?? context.element : context.element
+            if let value = AXValueCreate(.cfRange, &range), AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, value) == .success {
+                await OfficeText.pause(0.04)
+                return
+            }
         }
         OfficeText.key(124, to: context.pid)
         await OfficeText.pause(0.04)
@@ -242,7 +342,9 @@ struct ClipboardTextSnapshot {
                 ReplacementDiagnostics.fail("\(document.diagnosticPrefix)_trigger_not_verified")
                 throw AppError.message("未确认 \(document.name) 当前输入段落，请在句末按设置次数连续空格。原文未改动。")
             }
-            guard text.length > 0, text.attribute(.font, at: 0, effectiveRange: nil) is NSFont else {
+            // Excel's live text editor copies plain text only; plain-text paste
+            // edits the cell contents while Excel retains its cell formatting.
+            guard document == .excel || (text.length > 0 && text.attribute(.font, at: 0, effectiveRange: nil) is NSFont) else {
                 ReplacementDiagnostics.fail("\(document.diagnosticPrefix)_font_unavailable")
                 throw AppError.message("\(document.name) 未提供可核实的字号与粗细，原文未改动。请改用划词翻译。")
             }
@@ -271,9 +373,13 @@ struct ClipboardTextSnapshot {
         var selected = true
         defer { if selected, (try? validate(context)) != nil { OfficeText.key(124, to: context.pid) } }
         guard OfficeTextRules.samePrefix(current.string, state.text.string) else { throw TextReplacementError.changed }
-        let output: String
-        if let original = snapshot.richRestoration, original.string == text { output = text }
-        else { output = try TextCompatibilityRules.replacingLine(current.string, with: text, triggerSpaces: snapshot.triggerSpaceCount) }
+        let rawOutput: String
+        if let original = snapshot.richRestoration, original.string == text { rawOutput = text }
+        else { rawOutput = try TextCompatibilityRules.replacingLine(current.string, with: text, triggerSpaces: snapshot.triggerSpaceCount) }
+        let output = context.microsoftDocument == .powerPoint ? MicrosoftTextRules.powerPointPasteText(rawOutput) : rawOutput
+        guard context.microsoftDocument != .excel || MicrosoftTextRules.permitsExcelText(output) else {
+            throw AppError.message("译文以公式符号开头，未写入 Excel，请使用划词翻译并手动确认。")
+        }
         try Task.checkCancellation()
         try TextInputGate.check()
         try await paste(output, context: context)
@@ -286,7 +392,7 @@ struct ClipboardTextSnapshot {
                   old.fontDescriptor.symbolicTraits.intersection([.bold, .italic]) == new.fontDescriptor.symbolicTraits.intersection([.bold, .italic]) else {
                 let beforeRecovery = try await prefix(context, collapse: false)
                 guard OfficeTextRules.samePrefix(beforeRecovery.string, output) else { OfficeText.key(124, to: context.pid); throw TextReplacementError.changed }
-                try await paste(current.string, context: context)
+                try await paste(context.microsoftDocument == .powerPoint ? MicrosoftTextRules.powerPointPasteText(current.string) : current.string, context: context)
                 _ = try await prefix(context, collapse: true)
                 throw AppError.message("此编辑器未保留文字样式，已恢复原文。")
             }

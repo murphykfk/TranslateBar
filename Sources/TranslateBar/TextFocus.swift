@@ -11,6 +11,14 @@ import TranslateCore
         AXUIElementSetMessagingTimeout(application, 0.2)
         let direct: AXUIElement? = AccessibleText.attribute(application, kAXFocusedUIElementAttribute)
         ReplacementDiagnostics.note("focus_application", ["available": direct != nil ? 1 : 0])
+        // Excel keeps focus on the sheet canvas during in-cell editing. Its
+        // formula editor mirrors that same caret only while Enter and Cancel
+        // are active. Never infer text focus from a selected grid cell alone.
+        if let direct, let role: String = AccessibleText.attribute(direct, kAXRoleAttribute), ["AXLayoutArea", "AXTextArea"].contains(role),
+           NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.microsoft.Excel",
+           let editor = MicrosoftText.excelEditingElement(pid: pid),
+           role == "AXLayoutArea" || (AccessibleText.textValue(direct) == AccessibleText.textValue(editor)
+                && AccessibleText.selectedRange(direct) == AccessibleText.selectedRange(editor)) { return editor }
         if let direct, belongs(direct, to: pid), !isContainer(direct) { return direct }
 
         let system = AXUIElementCreateSystemWide()

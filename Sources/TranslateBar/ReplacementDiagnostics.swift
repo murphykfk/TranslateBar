@@ -23,6 +23,7 @@ import Foundation
         note("captured", ["length": snapshot.fullValue?.utf16.count ?? -1, "caret": snapshot.selectionRange?.location ?? -1, "selection": snapshot.selectionRange?.length ?? -1])
     }
     static func note(_ stage: String, _ counts: [String: Int] = [:]) {
+        if stage.hasPrefix("focus_"), current?.checks.contains(where: { $0.stage == stage && $0.counts == counts }) == true { return }
         guard current != nil, current!.checks.count < 32 else { return }
         current?.checks.append(Check(stage: stage, counts: counts))
     }

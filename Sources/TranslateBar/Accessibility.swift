@@ -513,15 +513,7 @@ struct TextElementIdentity {
         changeCount = pasteboard.changeCount
         guard let plain = pasteboard.string(forType: .string), !plain.isEmpty else { return NSAttributedString(string: "") }
         guard let rich = copiedRichText() else { return NSAttributedString(string: plain) }
-        let canonicalPlain = plain.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
-        let canonicalRich = rich.string.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
-        guard canonicalRich == canonicalPlain || canonicalRich == canonicalPlain + "\n" else { return NSAttributedString(string: plain) }
-        // WPS exports one RTF paragraph terminator beyond a line-only selection.
-        let result: NSAttributedString
-        if rich.string == plain { result = rich }
-        else if rich.string == plain + "\n" || rich.string == plain + "\r" || rich.string == plain + "\r\n" { result = rich.attributedSubstring(from: NSRange(location: 0, length: (plain as NSString).length)) }
-        else { return NSAttributedString(string: plain) }
-        return result
+        return ClipboardRichText.matching(plain, rich: rich) ?? NSAttributedString(string: plain)
     }
     func copiedMetadata() -> [String: Any] {
         let plain = pasteboard.string(forType: .string) ?? ""
