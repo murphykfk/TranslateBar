@@ -47,20 +47,10 @@ import TranslateCore
                 ReplacementDiagnostics.fail("\(document.diagnosticPrefix)_body_focus_unverified")
                 throw AppError.message("未确认 \(document.name) 文字焦点，请点击文字内部后重试。原文未改动。")
             }
-            guard let paste = command("paste:", pid: context.pid) else {
-                ReplacementDiagnostics.fail("\(document.diagnosticPrefix)_paste_command_missing")
-                throw AppError.message("未确认 \(document.name) 的粘贴能力，请将光标放回文字内部后重试，或使用划词翻译。")
-            }
-            // A disabled Paste command can also mean an empty clipboard. Use
-            // the existing protected clipboard transaction to distinguish it.
-            let transaction = TemporaryClipboard(text: "TranslateBar edit capability check")
+            let probe = "TranslateBar edit capability check"
+            let transaction = TemporaryClipboard(text: probe)
             defer { transaction.restore() }
-            await OfficeText.pause(0.04)
-            try ClipboardText.validate(context)
-            try TextInputGate.check()
-            let pasteEnabled: Bool? = AccessibleText.attribute(paste, kAXEnabledAttribute)
-            ReplacementDiagnostics.note("\(document.diagnosticPrefix)_paste_check", ["enabled": pasteEnabled.map { $0 ? 1 : 0 } ?? -1])
-            guard pasteEnabled == true else {
+            guard let paste = try await enabledPaste(context, transaction: transaction, text: probe) else {
                 ReplacementDiagnostics.fail("\(document.diagnosticPrefix)_paste_unavailable")
                 throw AppError.message("未确认 \(document.name) 当前“粘贴”命令可用，请点击可编辑文字内部后重试。原文未改动。")
             }
@@ -77,6 +67,38 @@ import TranslateCore
             ReplacementDiagnostics.note("\(document.diagnosticPrefix)_edit_capability_verified")
             return paste
         }
+    }
+
+    /// Office may update or recreate the Edit menu after the pasteboard changes.
+    /// Re-resolve the command with the staged payload still owned by us.
+    static func enabledPaste(_ context: ClipboardTextContext, transaction: TemporaryClipboard, text: String) async throws -> AXUIElement? {
+        let delays: [Double] = context.microsoftDocument == .powerPoint ? [0.04, 0.06, 0.10, 0.15] : [0.04]
+        let prefix = context.microsoftDocument?.diagnosticPrefix ?? "office"
+        var enabled: Bool?
+        for (index, delay) in delays.enumerated() {
+            await OfficeText.pause(delay)
+            try Task.checkCancellation()
+            try ClipboardText.validate(context)
+            try TextInputGate.check()
+            guard transaction.stillContains(text) else {
+                ReplacementDiagnostics.fail("\(prefix)_pasteboard_changed")
+                throw TextReplacementError.changed
+            }
+            let paste = command("paste:", pid: context.pid)
+            enabled = paste.flatMap { AccessibleText.attribute($0, kAXEnabledAttribute) }
+            if let paste, enabled == true {
+                try ClipboardText.validate(context)
+                try TextInputGate.check()
+                guard transaction.stillContains(text) else {
+                    ReplacementDiagnostics.fail("\(prefix)_pasteboard_changed")
+                    throw TextReplacementError.changed
+                }
+                ReplacementDiagnostics.note("\(prefix)_paste_check", ["enabled": 1, "attempts": index + 1])
+                return paste
+            }
+        }
+        ReplacementDiagnostics.note("\(prefix)_paste_check", ["enabled": enabled.map { $0 ? 1 : 0 } ?? -1, "attempts": delays.count])
+        return nil
     }
 
     static func validateSelectedInput(_ context: ClipboardTextContext) throws {

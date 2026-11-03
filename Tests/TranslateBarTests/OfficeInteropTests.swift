@@ -49,6 +49,17 @@ final class OfficeInteropTests: XCTestCase {
         temporary.restore()
         XCTAssertEqual(board.string(forType: .string), "new user copy")
     }
+    @MainActor func testPasteProbeRejectsClipboardReplacedWithIdenticalText() {
+        let board = NSPasteboard(name: .init("TranslateBarPasteProbe.\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        board.setString("original", forType: .string)
+        let temporary = TemporaryClipboard(text: "translation", pasteboard: board)
+        XCTAssertTrue(temporary.stillContains("translation"))
+        board.clearContents(); board.setString("translation", forType: .string)
+        XCTAssertFalse(temporary.stillContains("translation"))
+        temporary.restore()
+        XCTAssertEqual(board.string(forType: .string), "translation")
+    }
     func testOnlyTrailingSpaceKindIsNormalizedAndItsCountIsExact() {
         XCTAssertTrue(OfficeTextRules.samePrefix("正文 \u{00a0} \u{00a0}", "正文    "))
         XCTAssertFalse(OfficeTextRules.samePrefix("正文   ", "正文    "))

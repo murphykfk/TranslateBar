@@ -404,10 +404,9 @@ struct ClipboardTextSnapshot {
         try validate(context)
         let transaction = TemporaryClipboard(text: text)
         defer { transaction.restore() }
-        if let paste = context.documentPasteCommand {
-            await OfficeText.pause(0.04)
-            try validate(context); try TextInputGate.check()
-            guard (AccessibleText.attribute(paste, kAXEnabledAttribute) as Bool?) == true else {
+        if context.documentPasteCommand != nil {
+            guard try await MicrosoftText.enabledPaste(context, transaction: transaction, text: text) != nil else {
+                if let document = context.microsoftDocument { ReplacementDiagnostics.fail("\(document.diagnosticPrefix)_replacement_paste_unavailable") }
                 throw AppError.message("\(context.microsoftDocument?.name ?? "当前编辑器") 已不允许粘贴，原文未改动，译文已保留。")
             }
         }

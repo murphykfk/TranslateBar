@@ -498,6 +498,9 @@ struct TextElementIdentity {
         changeCount = pasteboard.changeCount
         return true
     }
+    func stillContains(_ text: String) -> Bool {
+        pasteboard.changeCount == changeCount && pasteboard.string(forType: .string) == text
+    }
     func copiedRichText() -> NSAttributedString? {
         for (type, format) in [(NSPasteboard.PasteboardType.rtf, NSAttributedString.DocumentType.rtf), (.rtfd, .rtfd),
                                (NSPasteboard.PasteboardType("com.trolltech.anymime.Rich Text Format"), .rtf),
