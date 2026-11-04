@@ -295,7 +295,10 @@ struct ClipboardTextSnapshot {
             await OfficeText.pause(0.04)
             return
         }
-        if let original, context.microsoftDocument != .powerPoint {
+        let discord = NSRunningApplication(processIdentifier: context.pid)?.bundleIdentifier == ChatDraftCompatibility.discordBundleID
+        // Discord's keyboard-selected prefix ends at the caret. Collapse it
+        // with the editor's own keyboard handling instead of writing AX ranges.
+        if let original, context.microsoftDocument != .powerPoint, !discord {
             var range = CFRange(location: original.location, length: original.length)
             let element = context.microsoftDocument != nil ? TextFocus.resolve(pid: context.pid) ?? context.element : context.element
             if let value = AXValueCreate(.cfRange, &range), AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, value) == .success {

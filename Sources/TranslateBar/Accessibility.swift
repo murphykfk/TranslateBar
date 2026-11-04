@@ -229,10 +229,11 @@ struct TextElementIdentity {
         let range = try ParagraphInput.range(in: full, caret: caret)
         let source = string.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !source.isEmpty else { throw AppError.message("当前段落没有需要翻译的文本，已跳过。") }
-        let rich = role == "AXTextArea" ? attributedText(element, range: range) : nil
+        let discord = bundle == ChatDraftCompatibility.discordBundleID
+        let rich = role == "AXTextArea" && !discord ? attributedText(element, range: range) : nil
         let hasFont = rich.map { $0.length > 0 && $0.attribute(.font, at: 0, effectiveRange: nil) is NSFont } ?? false
         let preserve = hasFont || ["com.apple.Notes", "com.apple.TextEdit", "com.murphy.TranslateBarFixture"].contains(bundle)
-        return TextSnapshot(element: element, pid: pid, value: full, range: range, source: source, fullValue: full, allowTrailingSpaces: NSMaxRange(range) == string.length, identity: identity(element), selectionRange: caret, richText: rich, preservesRichText: preserve, triggerSpaceCount: settings.spaceCount, interactionRevision: TextInteraction.revision, prefersPaste: isWebControl(element))
+        return TextSnapshot(element: element, pid: pid, value: full, range: range, source: source, fullValue: full, allowTrailingSpaces: NSMaxRange(range) == string.length, identity: identity(element), selectionRange: caret, richText: rich, preservesRichText: preserve, triggerSpaceCount: settings.spaceCount, interactionRevision: TextInteraction.revision, prefersPaste: discord || isWebControl(element))
     }
     static func attributedText(_ element: AXUIElement, range: NSRange) -> NSAttributedString? {
         var cfRange = CFRange(location: range.location, length: range.length)
@@ -372,8 +373,11 @@ struct TextElementIdentity {
             }
             ReplacementDiagnostics.note("trigger_caret_synchronized", ["advance": (actualCaret?.location ?? caret.location) - caret.location])
         }
-        if snapshot.preservesRichText { return try await replaceRichText(snapshot, element: element, current: actual, translation: text) }
-        if snapshot.prefersPaste, (attribute(element, kAXRoleAttribute) as String?) == "AXTextArea" { return try await replaceRichText(snapshot, element: element, current: actual, translation: text, plain: true) }
+        if NSRunningApplication(processIdentifier: snapshot.pid)?.bundleIdentifier == ChatDraftCompatibility.discordBundleID {
+            return try await replaceRichText(snapshot, current: actual, translation: text, plain: true, keepPasteCaret: true)
+        }
+        if snapshot.preservesRichText { return try await replaceRichText(snapshot, current: actual, translation: text) }
+        if snapshot.prefersPaste, (attribute(element, kAXRoleAttribute) as String?) == "AXTextArea" { return try await replaceRichText(snapshot, current: actual, translation: text, plain: true) }
         let plan = try TextReplacementPlan(original: full, range: snapshot.range, current: actual, replacement: text, allowTrailingSpaces: snapshot.allowTrailingSpaces)
         if actual == plan.updated { return undoSnapshot(snapshot, element: element, plan: plan, replacement: text) }
         var range = CFRange(location: plan.range.location, length: plan.range.length)
@@ -414,7 +418,7 @@ struct TextElementIdentity {
         guard let verified = try await waitForValue(snapshot, expected: plan.updated) else { throw AppError.message("浏览器未完成回填，译文已保留。请保持光标在原输入框内重试。") }
         return undoSnapshot(snapshot, element: verified, plan: plan, replacement: text)
     }
-    private static func replaceRichText(_ snapshot: TextSnapshot, element: AXUIElement, current: String, translation: String, plain: Bool = false) async throws -> TextSnapshot {
+    private static func replaceRichText(_ snapshot: TextSnapshot, current: String, translation: String, plain: Bool = false, keepPasteCaret: Bool = false) async throws -> TextSnapshot {
         guard let full = snapshot.fullValue else { throw RichTextReplacementError.unavailable }
         let preflight: TextReplacementPlan
         do { preflight = try TextReplacementPlan(original: full, range: snapshot.range, current: current, replacement: translation, allowTrailingSpaces: snapshot.allowTrailingSpaces) }
@@ -445,11 +449,14 @@ struct TextElementIdentity {
             throw error
         }
         guard working == plan.updated, let verified = try await waitForValue(snapshot, expected: plan.updated) else { throw AppError.message("编辑器未完成格式回填，译文已保留。") }
-        var caret = CFRange(location: plan.range.location + formatted.length, length: 0)
-        if let ax = AXValueCreate(.cfRange, &caret) { _ = AXUIElementSetAttributeValue(verified, kAXSelectedTextRangeAttribute as CFString, ax) }
+        // Let Discord's editor retain the caret it placed during paste.
+        if !keepPasteCaret {
+            var caret = CFRange(location: plan.range.location + formatted.length, length: 0)
+            if let ax = AXValueCreate(.cfRange, &caret) { _ = AXUIElementSetAttributeValue(verified, kAXSelectedTextRangeAttribute as CFString, ax) }
+        }
         var undo = undoSnapshot(snapshot, element: verified, plan: plan, replacement: formatted.string)
         undo.preservesRichText = !plain
-        undo.richText = attributedText(verified, range: undo.range)
+        if !keepPasteCaret { undo.richText = attributedText(verified, range: undo.range) }
         undo.richRestoration = original
         return undo
     }

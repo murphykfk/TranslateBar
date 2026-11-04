@@ -1,8 +1,9 @@
 import Foundation
 
-/// Restrict keyboard-only editing to a known chat application's active window.
-/// A missing accessibility focus must never make an arbitrary window writable.
 public enum ChatDraftCompatibility {
+    public static let discordBundleID = "com.hnc.Discord"
+
+    /// A missing accessibility focus must never make an arbitrary window writable.
     public static func permitsMissingFocus(bundleID: String, windowTitle: String,
                                            activeWindow: Bool, standardControls: Bool,
                                            modal: Bool, secureInput: Bool) -> Bool {
