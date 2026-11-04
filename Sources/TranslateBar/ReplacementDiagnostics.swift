@@ -18,10 +18,6 @@ import Foundation
         current = Report(version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development", richText: false)
         note("capture_begin")
     }
-    static func begin(_ snapshot: TextSnapshot) {
-        current = Report(version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development", richText: snapshot.preservesRichText)
-        note("captured", ["length": snapshot.fullValue?.utf16.count ?? -1, "caret": snapshot.selectionRange?.location ?? -1, "selection": snapshot.selectionRange?.length ?? -1])
-    }
     static func note(_ stage: String, _ counts: [String: Int] = [:]) {
         if stage.hasPrefix("focus_"), current?.checks.contains(where: { $0.stage == stage && $0.counts == counts }) == true { return }
         guard current != nil, current!.checks.count < 32 else { return }
@@ -58,9 +54,9 @@ import Foundation
             case .keyboard: return "读取文本后收到键盘事件"
             default: return "检测到新的键盘或鼠标操作"
             }
-        case "capture_caret": return "光标位置与读取时不同"
-        case "copy_range", "paste_range": return "编辑器尚未确认待替换选区"
-        case "copy_content", "paste_content", "source_content": return "编辑器返回的正文与读取时不同"
+        case "paragraph_changed": return "当前段落与读取时不同"
+        case "paragraph_window_changed", "paragraph_focus_changed", "paragraph_application_changed": return "焦点或窗口已经变化"
+        case "paragraph_copy_unavailable": return "编辑器没有复制出选中的文字"
         case "queued_input": return "回填期间检测到新按键"
         default: return nil
         }

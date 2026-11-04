@@ -29,27 +29,5 @@ final class ChatDraftCompatibilityTests: XCTestCase {
         XCTAssertFalse(ChatDraftCompatibility.isWindowDecoration(role: "AXButton", subrole: "Send"))
     }
 
-    func testDraftMustContainTheConfiguredTriggerBeforeTranslation() {
-        XCTAssertTrue(ChatDraftCompatibility.containsTrigger("测试草稿   ", spaces: 3))
-        XCTAssertTrue(ChatDraftCompatibility.containsTrigger("Draft  ", spaces: 2))
-        XCTAssertTrue(ChatDraftCompatibility.containsTrigger("Draft \u{00a0} \u{00a0}", spaces: 4))
-        for text in ["历史消息", "草稿  ", "草稿。 ", "   ", "", "草稿\n下一段   ", "消息\t   ", "附件\u{fffc}   "] {
-            XCTAssertFalse(ChatDraftCompatibility.containsTrigger(text, spaces: 3), text)
-        }
-        XCTAssertFalse(ChatDraftCompatibility.containsTrigger("Draft    ", spaces: 1))
-        XCTAssertFalse(ChatDraftCompatibility.containsTrigger("Draft     ", spaces: 5))
-    }
 
-    func testCaretProbeRejectsCopyingWholeHistoryRowsAndUnrelatedSelections() {
-        XCTAssertTrue(ChatDraftCompatibility.matchesCaretProbe(line: "Draft   ", selectedCharacter: " "))
-        XCTAssertTrue(ChatDraftCompatibility.matchesCaretProbe(line: "中文", selectedCharacter: "文"))
-        XCTAssertTrue(ChatDraftCompatibility.matchesCaretProbe(line: "Emoji 😀", selectedCharacter: "😀"))
-        XCTAssertTrue(ChatDraftCompatibility.matchesCaretProbe(line: "Text\u{00a0}", selectedCharacter: "\u{00a0}"))
-        XCTAssertFalse(ChatDraftCompatibility.matchesCaretProbe(line: "History message   ", selectedCharacter: "History message   "))
-        XCTAssertFalse(ChatDraftCompatibility.matchesCaretProbe(line: "Draft   ", selectedCharacter: "Draft"))
-        XCTAssertFalse(ChatDraftCompatibility.matchesCaretProbe(line: "Draft.", selectedCharacter: " "))
-        XCTAssertFalse(ChatDraftCompatibility.matchesCaretProbe(line: "Draft.", selectedCharacter: ""))
-        XCTAssertFalse(ChatDraftCompatibility.matchesCaretProbe(line: "", selectedCharacter: ""))
-        XCTAssertFalse(ChatDraftCompatibility.matchesCaretProbe(line: "First\nSecond", selectedCharacter: "d"))
-    }
 }

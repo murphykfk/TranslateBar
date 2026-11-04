@@ -10,17 +10,10 @@ struct TextSnapshot {
     let range: NSRange
     let source: String
     let fullValue: String?
-    var allowTrailingSpaces = false
     var identity: TextElementIdentity?
     var selectionRange: NSRange?
-    var richText: NSAttributedString?
-    var preservesRichText = false
-    var richRestoration: NSAttributedString?
-    var triggerSpaceCount = 4
     var office: OfficeSnapshot?
     var clipboard: ClipboardTextSnapshot?
-    var interactionRevision: UInt64?
-    var prefersPaste = false
 }
 
 struct TextElementIdentity {
@@ -95,17 +88,6 @@ struct TextElementIdentity {
         AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &value)
         AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &selected)
         return value.boolValue || selected.boolValue
-    }
-    private static func isWebControl(_ element: AXUIElement) -> Bool {
-        var node = element
-        for _ in 0..<16 {
-            let role: String = attribute(node, kAXRoleAttribute) ?? ""
-            if role == "AXWebArea" { return true }
-            if role == kAXWindowRole { break }
-            guard let parent: AXUIElement = attribute(node, kAXParentAttribute), !CFEqual(parent, node) else { break }
-            node = parent
-        }
-        return false
     }
     static func selected(settings: AppSettings) throws -> TextSnapshot {
         let (element, pid) = try focused(settings: settings)
@@ -184,56 +166,28 @@ struct TextElementIdentity {
     static func selectionBounds(_ snapshot: TextSnapshot) -> NSRect? {
         if let clipboard = snapshot.clipboard { return clipboard.anchor }
         if let office = snapshot.office { return office.anchor }
-        var result: CFTypeRef?
         var marker: CFTypeRef?
         if AXUIElementCopyAttributeValue(snapshot.element, "AXSelectedTextMarkerRange" as CFString, &marker) == .success, let marker {
+            var result: CFTypeRef?
             _ = AXUIElementCopyParameterizedAttributeValue(snapshot.element, "AXBoundsForTextMarkerRange" as CFString, marker, &result)
+            if result != nil { return screenRect(result) }
         }
-        if result == nil {
-            var range = CFRange(location: snapshot.range.location, length: snapshot.range.length)
-            if let value = AXValueCreate(.cfRange, &range) {
-                _ = AXUIElementCopyParameterizedAttributeValue(snapshot.element, kAXBoundsForRangeParameterizedAttribute as CFString, value, &result)
-            }
-        }
+        return bounds(of: snapshot.range, in: snapshot.element)
+    }
+    static func bounds(of range: NSRange, in element: AXUIElement) -> NSRect? {
+        var cfRange = CFRange(location: range.location, length: range.length)
+        guard let value = AXValueCreate(.cfRange, &cfRange) else { return nil }
+        var result: CFTypeRef?
+        _ = AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, value, &result)
+        return screenRect(result)
+    }
+    private static func screenRect(_ result: CFTypeRef?) -> NSRect? {
         guard let result, CFGetTypeID(result) == AXValueGetTypeID() else { return nil }
         var bounds = CGRect.zero
         guard AXValueGetValue(result as! AXValue, .cgRect, &bounds), !bounds.isNull, !bounds.isInfinite,
               bounds.origin.x.isFinite, bounds.origin.y.isFinite, bounds.width.isFinite, bounds.height.isFinite, bounds.width > 0, bounds.height > 0 else { return nil }
         let top = NSScreen.screens.first?.frame.maxY ?? 0
         return NSRect(x: bounds.minX, y: top - bounds.maxY, width: bounds.width, height: bounds.height)
-    }
-    static func input(settings: AppSettings) throws -> TextSnapshot {
-        let (focusedElement, pid) = try focused(settings: settings)
-        guard let element = inputCandidates(focusedElement).first(where: { textValue($0) != nil && selectedRange($0) != nil }),
-              let full = textValue(element), !full.isEmpty,
-              let caret = selectedRange(element), caret.location <= (full as NSString).length else { throw AppError.message("当前输入框不支持读取文本，已跳过。") }
-        guard !isSecure(element), (attribute(element, "AXEditable") as Bool?) != false,
-              (attribute(element, kAXEnabledAttribute) as Bool?) != false else { throw AppError.message("当前控件不可编辑，已跳过。") }
-        let role: String = attribute(element, kAXRoleAttribute) ?? ""
-        let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
-        // Office can expose AXTextArea only after its canvas is initialized.
-        // Keep the same verified paragraph/soft-break scope in both states.
-        if MicrosoftTextRules.usesDocumentFallback(bundleID: bundle, role: role) {
-            throw AppError.message("Office 正文需要通过兼容路径回填，请开启“增强取词与回填兼容”。")
-        }
-        guard canEdit(element) else { throw AppError.message("当前控件不可编辑，已跳过。") }
-        // Chromium block editors expose AXValue with paragraph separators that
-        // do not consistently share offsets with AXSelectedTextRange. A local
-        // keyboard-selected line is safer than indexing across their blocks.
-        if isWebControl(element), role == "AXTextArea",
-           let children: [AXUIElement] = attribute(element, kAXChildrenAttribute),
-           children.contains(where: { ["AXHeading", "AXParagraph", "AXList", "AXTable"].contains(attribute($0, kAXRoleAttribute) as String? ?? "") }) {
-            throw AppError.message("此网页编辑器使用结构化段落，改用当前行兼容模式。")
-        }
-        let string = full as NSString
-        let range = try ParagraphInput.range(in: full, caret: caret)
-        let source = string.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !source.isEmpty else { throw AppError.message("当前段落没有需要翻译的文本，已跳过。") }
-        let discord = bundle == ChatDraftCompatibility.discordBundleID
-        let rich = role == "AXTextArea" && !discord ? attributedText(element, range: range) : nil
-        let hasFont = rich.map { $0.length > 0 && $0.attribute(.font, at: 0, effectiveRange: nil) is NSFont } ?? false
-        let preserve = hasFont || ["com.apple.Notes", "com.apple.TextEdit", "com.murphy.TranslateBarFixture"].contains(bundle)
-        return TextSnapshot(element: element, pid: pid, value: full, range: range, source: source, fullValue: full, allowTrailingSpaces: NSMaxRange(range) == string.length, identity: identity(element), selectionRange: caret, richText: rich, preservesRichText: preserve, triggerSpaceCount: settings.spaceCount, interactionRevision: TextInteraction.revision, prefersPaste: discord || isWebControl(element))
     }
     static func attributedText(_ element: AXUIElement, range: NSRange) -> NSAttributedString? {
         var cfRange = CFRange(location: range.location, length: range.length)
@@ -257,233 +211,16 @@ struct TextElementIdentity {
         }
         return normalized
     }
-    static func formattingSnapshot(_ snapshot: TextSnapshot) async throws -> TextSnapshot {
-        guard let full = snapshot.fullValue else { throw RichTextReplacementError.unavailable }
-        var updated = snapshot
-        updated.richText = try await richTextForRange(snapshot, range: snapshot.range, expected: (full as NSString).substring(with: snapshot.range), current: full)
-        return updated
-    }
-    private static func richTextForRange(_ snapshot: TextSnapshot, range: NSRange, expected: String, current: String) async throws -> NSAttributedString {
-        let element = try target(snapshot)
-        if let direct = attributedText(element, range: range), direct.string == expected { return direct }
-        // Notes does not always expose RTF through accessibility. Copy only the
-        // already verified source range, read its local RTF, then restore both
-        // the user's clipboard and original caret before doing anything else.
-        let caret = selectedRange(element)
-        let clipboard = TemporaryClipboard(text: "TranslateBar formatting \(UUID().uuidString)")
-        defer {
-            clipboard.restore()
-            if let caret, let destination = try? target(snapshot), let value = textValue(destination), value == current, selectedRange(destination) == range {
-                var restored = CFRange(location: caret.location, length: caret.length)
-                if let ax = AXValueCreate(.cfRange, &restored) { _ = AXUIElementSetAttributeValue(destination, kAXSelectedTextRangeAttribute as CFString, ax) }
-            }
-        }
-        var selected = CFRange(location: range.location, length: range.length)
-        guard let ax = AXValueCreate(.cfRange, &selected), AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, ax) == .success else { throw RichTextReplacementError.unavailable }
-        await pause(0.04)
-        let destination = try target(snapshot)
-        guard let value = textValue(destination), value == current else { ReplacementDiagnostics.fail("copy_content"); throw TextReplacementError.changed }
-        guard selectedRange(destination) == range else {
-            ReplacementDiagnostics.fail("copy_range", ["wanted": range.location, "wanted_length": range.length, "actual": selectedRange(destination)?.location ?? -1, "actual_length": selectedRange(destination)?.length ?? -1])
-            throw TextReplacementError.changed
-        }
-        sendCommandKey(8, to: snapshot.pid)
-        for _ in 0..<12 {
-            await pause(0.035)
-            if clipboard.acceptCopiedText(expected) {
-                guard let result = clipboard.copiedRichText() else { throw RichTextReplacementError.unavailable }
-                if result.string == expected { return result }
-                if result.string == expected + "\n" || result.string == expected + "\r\n" { return result.attributedSubstring(from: NSRange(location: 0, length: (expected as NSString).length)) }
-                throw RichTextReplacementError.unavailable
-            }
-        }
-        throw RichTextReplacementError.unavailable
-    }
     static func selectedRange(_ element: AXUIElement) -> NSRange? {
         guard let ax: AXValue = attribute(element, kAXSelectedTextRangeAttribute) else { return nil }
         var range = CFRange()
         guard AXValueGetValue(ax, .cfRange, &range), range.location >= 0, range.length >= 0 else { return nil }
         return NSRange(location: range.location, length: range.length)
     }
-    static func sendCommandKey(_ code: CGKeyCode, to pid: pid_t? = nil) {
-        let source = CGEventSource(stateID: .combinedSessionState)
-        for down in [true, false] {
-            let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down)
-            event?.flags = .maskCommand; event?.setIntegerValueField(.eventSourceUserData, value: InputMonitor.syntheticTag)
-            if let pid { event?.postToPid(pid) } else { event?.post(tap: .cgSessionEventTap) }
-        }
-    }
     private static func identity(_ element: AXUIElement) -> TextElementIdentity? {
         let identifier: String = attribute(element, "AXDOMIdentifier") ?? attribute(element, kAXIdentifierAttribute) ?? ""
         guard !identifier.isEmpty, let role: String = attribute(element, kAXRoleAttribute), let window: AXUIElement = attribute(element, kAXWindowAttribute) else { return nil }
         return TextElementIdentity(identifier: identifier, role: role, window: window)
-    }
-    private static func target(_ snapshot: TextSnapshot) throws -> AXUIElement {
-        guard !IsSecureEventInputEnabled() else { throw AppError.message("当前处于安全输入模式，未回填。") }
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == snapshot.pid else { throw AppError.message("焦点已经切换，译文保留在浮窗中。") }
-        guard let current = TextFocus.resolve(pid: snapshot.pid) else { throw AppError.message("输入框焦点已经变化，未覆盖原文。") }
-        if let revision = snapshot.interactionRevision, revision != TextInteraction.revision {
-            ReplacementDiagnostics.fail("input_revision", ["delta": Int(min(TextInteraction.revision &- revision, 1_000_000))])
-            ReplacementDiagnostics.note("recent_" + TextInteraction.lastKind.rawValue)
-            throw TextReplacementError.changed
-        }
-        for candidate in [current] + inputCandidates(current) {
-            guard !isSecure(candidate) else { throw AppError.message("密码输入框不参与翻译。") }
-            if CFEqual(candidate, snapshot.element) { return candidate }
-            if let expected = snapshot.identity, let actual = identity(candidate), expected.identifier == actual.identifier,
-               expected.role == actual.role, CFEqual(expected.window, actual.window) { return candidate }
-        }
-        throw AppError.message("输入框焦点已经变化，未覆盖原文。")
-    }
-    // A posted paste must be consumed before its temporary clipboard contents are restored.
-    private static func pause(_ seconds: Double) async {
-        await withCheckedContinuation { continuation in DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { continuation.resume() } }
-    }
-    private static func waitForValue(_ snapshot: TextSnapshot, expected: String) async throws -> AXUIElement? {
-        for _ in 0..<7 {
-            let element = try target(snapshot)
-            if let value = textValue(element), value == expected { return element }
-            await pause(0.035)
-        }
-        return nil
-    }
-    static func replace(_ snapshot: TextSnapshot, with text: String) async throws -> TextSnapshot {
-        ReplacementDiagnostics.begin(snapshot)
-        do {
-            let result = try await TextInputGate.run(pid: snapshot.pid) { try await protectedReplace(snapshot, with: text) }
-            ReplacementDiagnostics.finish(success: true)
-            return result
-        } catch { ReplacementDiagnostics.finish(success: false); throw error }
-    }
-    private static func protectedReplace(_ snapshot: TextSnapshot, with text: String) async throws -> TextSnapshot {
-        try Task.checkCancellation()
-        try TextInputGate.check()
-        if snapshot.clipboard != nil { return try await ClipboardText.replace(snapshot, with: text) }
-        if snapshot.office != nil { return try await OfficeText.replace(snapshot, with: text) }
-        let element = try target(snapshot)
-        guard let full = snapshot.fullValue, let actual = textValue(element) else { throw AppError.message("当前输入框不能安全回填，译文已保留。") }
-        if let caret = snapshot.selectionRange, selectedRange(element) != caret {
-            let actualCaret = selectedRange(element)
-            let synchronized = snapshot.allowTrailingSpaces && actualCaret.map {
-                TriggerCaretSynchronization.permits(original: full, current: actual, captured: caret, actual: $0, replacementRange: snapshot.range, triggerSpaces: snapshot.triggerSpaceCount, interactionUnchanged: snapshot.interactionRevision == TextInteraction.revision)
-            } == true
-            guard synchronized else {
-                ReplacementDiagnostics.fail("capture_caret", ["original_length": full.utf16.count, "actual_length": actual.utf16.count, "old_caret": caret.location, "old_selection": caret.length, "new_caret": actualCaret?.location ?? -1, "new_selection": actualCaret?.length ?? -1])
-                throw TextReplacementError.changed
-            }
-            ReplacementDiagnostics.note("trigger_caret_synchronized", ["advance": (actualCaret?.location ?? caret.location) - caret.location])
-        }
-        if NSRunningApplication(processIdentifier: snapshot.pid)?.bundleIdentifier == ChatDraftCompatibility.discordBundleID {
-            return try await replaceRichText(snapshot, current: actual, translation: text, plain: true, keepPasteCaret: true)
-        }
-        if snapshot.preservesRichText { return try await replaceRichText(snapshot, current: actual, translation: text) }
-        if snapshot.prefersPaste, (attribute(element, kAXRoleAttribute) as String?) == "AXTextArea" { return try await replaceRichText(snapshot, current: actual, translation: text, plain: true) }
-        let plan = try TextReplacementPlan(original: full, range: snapshot.range, current: actual, replacement: text, allowTrailingSpaces: snapshot.allowTrailingSpaces)
-        if actual == plan.updated { return undoSnapshot(snapshot, element: element, plan: plan, replacement: text) }
-        var range = CFRange(location: plan.range.location, length: plan.range.length)
-        var selectedWritable = DarwinBoolean(false)
-        AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &selectedWritable)
-        if !snapshot.prefersPaste, selectedWritable.boolValue, let ax = AXValueCreate(.cfRange, &range), AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, ax) == .success,
-           AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString) == .success,
-           let verified = try await waitForValue(snapshot, expected: plan.updated) {
-            return undoSnapshot(snapshot, element: verified, plan: plan, replacement: text)
-        }
-        let current = try target(snapshot)
-        guard let currentValue = textValue(current), currentValue == actual else { throw TextReplacementError.changed }
-        var writable = DarwinBoolean(false)
-        AXUIElementIsAttributeSettable(current, kAXValueAttribute as CFString, &writable)
-        if !snapshot.prefersPaste, writable.boolValue, AXUIElementSetAttributeValue(current, kAXValueAttribute as CFString, plan.updated as CFString) == .success,
-           let verified = try await waitForValue(snapshot, expected: plan.updated) {
-            return undoSnapshot(snapshot, element: verified, plan: plan, replacement: text)
-        }
-        // Some web inputs expose text but do not implement AX writing. Paste into the
-        // same verified field, then restore every clipboard format if nobody else changed it.
-        let pasteTarget = try target(snapshot)
-        guard let beforePaste = textValue(pasteTarget), beforePaste == actual else { throw TextReplacementError.changed }
-        if let ax = AXValueCreate(.cfRange, &range) { _ = AXUIElementSetAttributeValue(pasteTarget, kAXSelectedTextRangeAttribute as CFString, ax) }
-        await pause(0.05)
-        if selectedRange(pasteTarget) != plan.range {
-            guard plan.range.location == 0, plan.range.length == (actual as NSString).length else { throw AppError.message("此编辑器无法定位当前段落，请选中该段使用划词翻译。") }
-            sendCommandKey(0, to: snapshot.pid); await pause(0.08)
-        }
-        let verifiedTarget = try target(snapshot)
-        guard let verifiedValue = textValue(verifiedTarget), verifiedValue == actual else { throw TextReplacementError.changed }
-        guard selectedRange(verifiedTarget) == plan.range else { throw AppError.message("此输入框无法选中待替换文字，原文未改动。") }
-        try Task.checkCancellation()
-        let clipboard = TemporaryClipboard(text: text)
-        defer { clipboard.restore() }
-        sendCommandKey(9, to: snapshot.pid)
-        // Cancellation after posting must still allow the paste to finish before restoring.
-        await pause(0.12)
-        guard let verified = try await waitForValue(snapshot, expected: plan.updated) else { throw AppError.message("浏览器未完成回填，译文已保留。请保持光标在原输入框内重试。") }
-        return undoSnapshot(snapshot, element: verified, plan: plan, replacement: text)
-    }
-    private static func replaceRichText(_ snapshot: TextSnapshot, current: String, translation: String, plain: Bool = false, keepPasteCaret: Bool = false) async throws -> TextSnapshot {
-        guard let full = snapshot.fullValue else { throw RichTextReplacementError.unavailable }
-        let preflight: TextReplacementPlan
-        do { preflight = try TextReplacementPlan(original: full, range: snapshot.range, current: current, replacement: translation, allowTrailingSpaces: snapshot.allowTrailingSpaces) }
-        catch { ReplacementDiagnostics.fail("source_content", ["original_length": full.utf16.count, "actual_length": current.utf16.count]); throw error }
-        let original = plain ? NSAttributedString(string: preflight.originalText) : try await richTextForRange(snapshot, range: preflight.range, expected: preflight.originalText, current: current)
-        let formatted: NSAttributedString
-        if let restoration = snapshot.richRestoration, restoration.string == translation { formatted = restoration }
-        else { formatted = try RichTextReplacement.translated(translation, preserving: original, removingTriggerSpaces: true, triggerSpaceCount: snapshot.triggerSpaceCount, requireFont: !plain) }
-        let plan = try TextReplacementPlan(original: full, range: snapshot.range, current: current, replacement: formatted.string, allowTrailingSpaces: snapshot.allowTrailingSpaces)
-        let edits = try RichTextReplacement.edits(original: original, replacement: formatted, offset: plan.range.location)
-        var working = current
-        var applied: [RichTextReplacement.Edit] = []
-        do {
-            for edit in edits {
-                working = try await pasteRichFragment(snapshot, range: edit.range, replacement: edit.replacement, expected: working, plain: plain)
-                applied.append(edit)
-            }
-        } catch {
-            // Roll back only while the document still exactly matches our own
-            // edits. New user text is never overwritten during recovery.
-            if let destination = try? target(snapshot), let value = textValue(destination), value == working {
-                for edit in applied.reversed() {
-                    let range = NSRange(location: edit.range.location, length: edit.replacement.length)
-                    guard let restored = try? await pasteRichFragment(snapshot, range: range, replacement: edit.original, expected: working, plain: plain) else { break }
-                    working = restored
-                }
-            }
-            throw error
-        }
-        guard working == plan.updated, let verified = try await waitForValue(snapshot, expected: plan.updated) else { throw AppError.message("编辑器未完成格式回填，译文已保留。") }
-        // Let Discord's editor retain the caret it placed during paste.
-        if !keepPasteCaret {
-            var caret = CFRange(location: plan.range.location + formatted.length, length: 0)
-            if let ax = AXValueCreate(.cfRange, &caret) { _ = AXUIElementSetAttributeValue(verified, kAXSelectedTextRangeAttribute as CFString, ax) }
-        }
-        var undo = undoSnapshot(snapshot, element: verified, plan: plan, replacement: formatted.string)
-        undo.preservesRichText = !plain
-        if !keepPasteCaret { undo.richText = attributedText(verified, range: undo.range) }
-        undo.richRestoration = original
-        return undo
-    }
-    private static func pasteRichFragment(_ snapshot: TextSnapshot, range: NSRange, replacement: NSAttributedString, expected: String, plain: Bool = false) async throws -> String {
-        let element = try target(snapshot)
-        guard let value = textValue(element), value == expected else { ReplacementDiagnostics.fail("paste_content"); throw TextReplacementError.changed }
-        var selected = CFRange(location: range.location, length: range.length)
-        guard let ax = AXValueCreate(.cfRange, &selected), AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, ax) == .success else { throw RichTextReplacementError.unavailable }
-        await pause(0.04)
-        let destination = try target(snapshot)
-        guard let current = textValue(destination), current == expected else { ReplacementDiagnostics.fail("paste_content"); throw TextReplacementError.changed }
-        guard selectedRange(destination) == range else {
-            ReplacementDiagnostics.fail("paste_range", ["wanted": range.location, "wanted_length": range.length, "actual": selectedRange(destination)?.location ?? -1, "actual_length": selectedRange(destination)?.length ?? -1])
-            throw TextReplacementError.changed
-        }
-        let updated = (expected as NSString).replacingCharacters(in: range, with: replacement.string)
-        let clipboard = TemporaryClipboard(text: replacement.string, rtf: plain ? nil : try RichTextReplacement.rtf(replacement))
-        defer { clipboard.restore() }
-        try Task.checkCancellation()
-        try TextInputGate.check()
-        sendCommandKey(9, to: snapshot.pid)
-        await pause(0.12)
-        guard try await waitForValue(snapshot, expected: updated) != nil else { throw AppError.message("编辑器未完成段落回填，译文已保留。") }
-        return updated
-    }
-    private static func undoSnapshot(_ snapshot: TextSnapshot, element: AXUIElement, plan: TextReplacementPlan, replacement: String) -> TextSnapshot {
-        TextSnapshot(element: element, pid: snapshot.pid, value: plan.updated, range: NSRange(location: plan.range.location, length: (replacement as NSString).length), source: plan.originalText, fullValue: plan.updated, identity: identity(element), selectionRange: selectedRange(element), interactionRevision: TextInteraction.revision, prefersPaste: snapshot.prefersPaste)
     }
 }
 
@@ -491,22 +228,12 @@ struct TextElementIdentity {
     private let pasteboard: NSPasteboard
     private let saved: [[(NSPasteboard.PasteboardType, Data)]]
     private var changeCount: Int
-    init(text: String, rtf: Data? = nil, pasteboard: NSPasteboard = .general) {
+    init(text: String, pasteboard: NSPasteboard = .general) {
         self.pasteboard = pasteboard
         saved = ClipboardFormats.snapshot(pasteboard) ?? pasteboard.pasteboardItems?.map { original in original.types.compactMap { type in original.data(forType: type).map { (type, $0) } } } ?? []
         let item = NSPasteboardItem(); item.setString(text, forType: .string)
-        if let rtf { item.setData(rtf, forType: .rtf) }
         item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
         pasteboard.clearContents(); pasteboard.writeObjects([item]); changeCount = pasteboard.changeCount
-    }
-    func acceptCopiedText(_ expected: String) -> Bool {
-        guard pasteboard.changeCount != changeCount, let copied = pasteboard.string(forType: .string),
-              copied == expected || copied == expected + "\n" || copied == expected + "\r\n" else { return false }
-        changeCount = pasteboard.changeCount
-        return true
-    }
-    func stillContains(_ text: String) -> Bool {
-        pasteboard.changeCount == changeCount && pasteboard.string(forType: .string) == text
     }
     func copiedRichText() -> NSAttributedString? {
         for (type, format) in [(NSPasteboard.PasteboardType.rtf, NSAttributedString.DocumentType.rtf), (.rtfd, .rtfd),
@@ -519,11 +246,17 @@ struct TextElementIdentity {
         return nil
     }
     func takeCopiedRichText() -> NSAttributedString? {
+        guard let copied = takeCopiedText() else { return nil }
+        return copied.rich ?? NSAttributedString(string: copied.plain)
+    }
+    /// The copied plain text, its formatted form when the source exported one
+    /// with the same characters, and whether that form embeds attachments.
+    func takeCopiedText() -> (plain: String, rich: NSAttributedString?, attachments: Bool)? {
         guard pasteboard.changeCount != changeCount else { return nil }
         changeCount = pasteboard.changeCount
-        guard let plain = pasteboard.string(forType: .string), !plain.isEmpty else { return NSAttributedString(string: "") }
-        guard let rich = copiedRichText() else { return NSAttributedString(string: plain) }
-        return ClipboardRichText.matching(plain, rich: rich) ?? NSAttributedString(string: plain)
+        guard let plain = pasteboard.string(forType: .string), !plain.isEmpty else { return ("", nil, false) }
+        guard let rich = copiedRichText() else { return (plain, nil, false) }
+        return (plain, ClipboardRichText.matching(plain, rich: rich), rich.containsAttachments)
     }
     func copiedMetadata() -> [String: Any] {
         let plain = pasteboard.string(forType: .string) ?? ""

@@ -5,14 +5,9 @@ import Carbon
 
 @main struct TranslateBarMain {
     @MainActor static func main() async {
-        if CommandLine.arguments.contains("--microsoft-office-selection-test") { await MicrosoftOfficeSmokeTest.run(inspectOnly: false, selectionOnly: true); return }
-        if CommandLine.arguments.contains("--microsoft-office-read-test") { await MicrosoftOfficeSmokeTest.run(inspectOnly: true); return }
-        if CommandLine.arguments.contains("--microsoft-office-smoke-test") { await MicrosoftOfficeSmokeTest.run(inspectOnly: false); return }
-        if CommandLine.arguments.contains("--compatibility-smoke-test") { await CompatibilitySmokeTest.run(); return }
-        if CommandLine.arguments.contains("--compatibility-gate-smoke-test") { await CompatibilitySmokeTest.gate(); return }
+        if CommandLine.arguments.contains("--paragraph-smoke-test") { await ParagraphSmokeTest.run(); return }
         if CommandLine.arguments.contains("--office-diagnostics") { OfficeText.diagnostics(); return }
         if CommandLine.arguments.contains("--office-read-smoke-test") { await OfficeText.readSmokeTest(); return }
-        if CommandLine.arguments.contains("--office-smoke-test") { await OfficeSmokeTest.run(); return }
         if let index = CommandLine.arguments.firstIndex(of: "--mute-worker"), CommandLine.arguments.indices.contains(index + 1) {
             let bundles = CommandLine.arguments.firstIndex(of: "--bundle-ids").map { Array(CommandLine.arguments.dropFirst($0 + 1)) }
             MuteWorker.run(bundleID: CommandLine.arguments[index + 1], bundleIDs: bundles); return
@@ -113,14 +108,8 @@ final class InstanceLock {
         }
         let event = NSAppleEventManager.shared().currentAppleEvent
         let loginLaunch = event?.eventID == kAEOpenApplication && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
-        if CommandLine.arguments.contains("--compatibility-flow-smoke-test") {
-            Task { await CompatibilitySmokeTest.flow(model: model) }
-        } else if CommandLine.arguments.contains("--office-flow-smoke-test") {
-            Task { await OfficeSmokeTest.flow(model: model) }
-        } else if CommandLine.arguments.contains("--selection-popup-smoke-test") {
+        if CommandLine.arguments.contains("--selection-popup-smoke-test") {
             Task { await SelectionPopupSmokeTest.run(model: model) }
-        } else if CommandLine.arguments.contains("--rich-text-smoke-test") {
-            Task { await RichTextSmokeTest.run(model: model) }
         } else if !loginLaunch || model.setup.needsAutomaticPresentation || model.setup.isPresented || CommandLine.arguments.contains("--show-settings") { showSettings() }
         UserDefaults.standard.set(true, forKey: "hasOpenedTranslateBar")
     }

@@ -74,22 +74,4 @@ enum RichTextReplacementError: LocalizedError {
         }
         return output
     }
-    static func rtf(_ text: NSAttributedString) throws -> Data {
-        try text.data(from: NSRange(location: 0, length: text.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
-    }
-    struct Edit {
-        let range: NSRange
-        let original: NSAttributedString
-        let replacement: NSAttributedString
-    }
-    static func edits(original: NSAttributedString, replacement: NSAttributedString, offset: Int) throws -> [Edit] {
-        let source = paragraphs(original.string), target = paragraphs(replacement.string)
-        guard source.count == target.count else { throw RichTextReplacementError.structureChanged }
-        return zip(source, target).compactMap { before, after in
-            let old = original.attributedSubstring(from: before.lineRange)
-            let new = replacement.attributedSubstring(from: after.lineRange)
-            guard old.string != new.string else { return nil }
-            return Edit(range: NSRange(location: offset + before.lineRange.location, length: before.lineRange.length), original: old, replacement: new)
-        }.reversed()
-    }
 }

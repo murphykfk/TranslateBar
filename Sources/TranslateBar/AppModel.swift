@@ -86,7 +86,7 @@ import TranslateCore
     private var startedAt = Date()
     private var lastLoudAudio = Date()
     private var lastCapturedAudio = Date()
-    private var undoSnapshot: TextSnapshot?
+    private var undoParagraph: ParagraphUndo?
     private var selectionLifetime = SelectionPopupLifetime()
     private var selectionWatcher: Task<Void, Never>?
     private var selectionSnapshot: TextSnapshot?
@@ -224,12 +224,12 @@ import TranslateCore
         case .audio: guard settings.audioEnabled else { return }; toggleAudio()
         case .undo:
             guard !translating else { lastMessage = "请等待当前翻译完成后再撤销。"; return }
-            guard let snapshot = undoSnapshot else { lastMessage = "没有可以撤销的替换。"; return }
+            guard let undo = undoParagraph else { lastMessage = "没有可以撤销的替换。"; return }
             translating = true
             translationTask = Task {
                 defer { finishTextRequest() }
                 do {
-                    _ = try await AccessibleText.replace(snapshot, with: snapshot.source); undoSnapshot = nil; lastMessage = "已撤销上次替换。"
+                    try await ParagraphText.undo(undo); undoParagraph = nil; lastMessage = "已撤销上次替换。"
                     dismissInputFeedback()
                 }
                 catch { if !(error is CancellationError) { showError(error.localizedDescription) } }
@@ -238,57 +238,59 @@ import TranslateCore
     }
     func translateInput() {
         guard !translating else { return }
-        captureText(input: true, quiet: false)
+        translating = true
+        ReplacementDiagnostics.beginCapture()
+        let feedbackID = settings.inputFeedbackEnabled ? inputFeedback.begin(pid: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0) : nil
+        if feedbackID != nil { showInputFeedback?() }
+        translationTask = Task {
+            do {
+                let paragraph = try await ParagraphText.capture(settings: settings)
+                try Task.checkCancellation()
+                if let feedbackID, inputFeedback.id == feedbackID { inputFeedback.anchor = paragraph.anchor }
+                translating = false
+                guard settings.enabled, settings.fourSpacesEnabled else { return }
+                beginTranslation(paragraph.draft.source, target: settings.inputLanguage, snapshot: nil, paragraph: paragraph, replace: true, feedbackID: feedbackID)
+            } catch {
+                finishTextRequest()
+                if !(error is CancellationError) {
+                    ReplacementDiagnostics.fail("input_capture_failed")
+                    ReplacementDiagnostics.finish(success: false)
+                    lastMessage = error.localizedDescription
+                    updateInputFeedback(feedbackID, message: error.localizedDescription, detail: "原文未改动 · 可尝试选中文字后翻译", phase: .failure)
+                } else { dismissInputFeedback() }
+            }
+        }
     }
     func translateSelection(quiet: Bool = false) {
         guard !translating else {
             if quiet { pendingSelectionPID = NSWorkspace.shared.frontmostApplication?.processIdentifier }
             return
         }
-        captureText(input: false, quiet: quiet)
-    }
-    private func captureText(input: Bool, quiet: Bool) {
         translating = true
-        if input {
-            ReplacementDiagnostics.beginCapture()
-            let bundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-            ReplacementDiagnostics.note("capture_application", ["document": MicrosoftTextRules.document(bundleID: bundle)?.rawValue ?? 0,
-                "wps": bundle == OfficeText.bundleID ? 1 : 0])
-        }
-        let feedbackID = input && settings.inputFeedbackEnabled ? inputFeedback.begin(pid: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0) : nil
-        if feedbackID != nil { showInputFeedback?() }
         translationTask = Task {
             do {
                 let snapshot: TextSnapshot
-                do { snapshot = try input ? AccessibleText.input(settings: settings) : AccessibleText.selected(settings: settings) }
+                do { snapshot = try AccessibleText.selected(settings: settings) }
                 catch {
-                    if input { ReplacementDiagnostics.note("direct_input_unavailable") }
                     if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == OfficeText.bundleID {
                         guard settings.wpsCompatibilityEnabled, !settings.excludes(OfficeText.bundleID) else { throw error }
-                        lastMessage = input ? "正在读取 WPS 当前段落…" : "正在读取 WPS 选中文字…"
-                        snapshot = try await input ? OfficeText.input(settings: settings) : OfficeText.selected(settings: settings)
+                        lastMessage = "正在读取 WPS 选中文字…"
+                        snapshot = try await OfficeText.selected(settings: settings)
                     } else {
                         guard settings.enhancedCompatibility else { throw error }
-                        lastMessage = input ? "正在兼容读取当前行…" : "正在兼容读取选中文字…"
-                        snapshot = try await input ? ClipboardText.input(settings: settings) : ClipboardText.selected(settings: settings)
+                        lastMessage = "正在兼容读取选中文字…"
+                        snapshot = try await ClipboardText.selected(settings: settings)
                     }
                 }
                 try Task.checkCancellation()
-                if let feedbackID, inputFeedback.id == feedbackID { inputFeedback.anchor = AccessibleText.selectionBounds(snapshot) }
                 translating = false
-                guard settings.enabled, input ? settings.fourSpacesEnabled : settings.selectionEnabled else { return }
-                if !input, selectionLifetime.current != nil, let previous = selectionSnapshot, previous.pid == snapshot.pid, previous.source == snapshot.source { return }
-                beginTranslation(snapshot.source, target: input ? settings.inputLanguage : settings.readingLanguage, snapshot: snapshot, replace: input, selection: !input, feedbackID: feedbackID)
+                guard settings.enabled, settings.selectionEnabled else { return }
+                if selectionLifetime.current != nil, let previous = selectionSnapshot, previous.pid == snapshot.pid, previous.source == snapshot.source { return }
+                beginTranslation(snapshot.source, target: settings.readingLanguage, snapshot: snapshot, replace: false, selection: true)
             } catch {
                 finishTextRequest()
-                if !(error is CancellationError) {
-                    if input {
-                        ReplacementDiagnostics.fail("input_capture_failed")
-                        ReplacementDiagnostics.finish(success: false)
-                        lastMessage = error.localizedDescription
-                        updateInputFeedback(feedbackID, message: error.localizedDescription, detail: "原文未改动 · 可尝试选中文字后翻译", phase: .failure)
-                    } else if !quiet { showError(error.localizedDescription) }
-                } else { dismissInputFeedback() }
+                if !(error is CancellationError) { if !quiet { showError(error.localizedDescription) } }
+                else { dismissInputFeedback() }
             }
         }
     }
@@ -321,7 +323,7 @@ import TranslateCore
             lastMessage = "已复制最近一次失败的兼容性诊断，不含原文或 API Key。"
         } catch { lastMessage = "无法复制兼容性诊断，请重新触发一次失败后重试。" }
     }
-    private func beginTranslation(_ text: String, target: String, snapshot: TextSnapshot?, replace: Bool, test: Bool = false, selection: Bool = false, feedbackID: UUID? = nil) {
+    private func beginTranslation(_ text: String, target: String, snapshot: TextSnapshot?, paragraph: ParagraphSnapshot? = nil, replace: Bool, test: Bool = false, selection: Bool = false, feedbackID: UUID? = nil) {
         guard settings.enabled, !translating else { return }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             updateInputFeedback(feedbackID, message: "没有需要翻译的文本", phase: .information)
@@ -358,11 +360,13 @@ import TranslateCore
                 guard settings.enabled else { return }
                 result.translation = response.text; result.fromCache = response.fromCache
                 if test { testOutput = response.text }
-                if replace, let snapshot {
+                if replace, let paragraph {
                     do {
-                        undoSnapshot = try await AccessibleText.replace(snapshot, with: response.text)
+                        let undo = try await ParagraphText.replace(paragraph, with: response.text)
+                        undoParagraph = undo
                         lastMessage = "已替换译文\(response.fromCache ? " · 本地缓存" : "") · \(settings.undoShortcut.display) 撤销"
-                        dismissInputFeedback()
+                        if undo.formatChanged { updateInputFeedback(feedbackID, message: "已替换，但此输入框没有沿用原格式", detail: "\(settings.undoShortcut.display) 撤销", phase: .information) }
+                        else { dismissInputFeedback() }
                         hideResult?()
                     }
                     catch { if !(error is CancellationError) { dismissInputFeedback(); lastMessage = error.localizedDescription; result.error = error.localizedDescription; result.replacementHint = ReplacementDiagnostics.failureHint; showResult?() } }

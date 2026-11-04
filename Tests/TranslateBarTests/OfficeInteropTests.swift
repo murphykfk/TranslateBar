@@ -33,7 +33,7 @@ final class OfficeInteropTests: XCTestCase {
         board.setString("original", forType: .string)
         let temporary = TemporaryClipboard(text: "sentinel", pasteboard: board)
         let rich = NSAttributedString(string: "Meeting\n", attributes: [.font: NSFont.systemFont(ofSize: 13)])
-        try legacyBoard(board, items: [[("com.trolltech.anymime.Rich Text Format", try RichTextReplacement.rtf(rich)), (NSPasteboard.PasteboardType.string.rawValue, Data("Meeting".utf8))]])
+        try legacyBoard(board, items: [[("com.trolltech.anymime.Rich Text Format", rich.data(from: NSRange(location: 0, length: rich.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])), (NSPasteboard.PasteboardType.string.rawValue, Data("Meeting".utf8))]])
         let copied = try XCTUnwrap(temporary.takeCopiedRichText())
         XCTAssertEqual(copied.string, "Meeting")
         XCTAssertEqual((copied.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize, 13)
@@ -48,23 +48,6 @@ final class OfficeInteropTests: XCTestCase {
         board.clearContents(); board.setString("new user copy", forType: .string)
         temporary.restore()
         XCTAssertEqual(board.string(forType: .string), "new user copy")
-    }
-    @MainActor func testPasteProbeRejectsClipboardReplacedWithIdenticalText() {
-        let board = NSPasteboard(name: .init("TranslateBarPasteProbe.\(UUID().uuidString)"))
-        defer { board.releaseGlobally() }
-        board.setString("original", forType: .string)
-        let temporary = TemporaryClipboard(text: "translation", pasteboard: board)
-        XCTAssertTrue(temporary.stillContains("translation"))
-        board.clearContents(); board.setString("translation", forType: .string)
-        XCTAssertFalse(temporary.stillContains("translation"))
-        temporary.restore()
-        XCTAssertEqual(board.string(forType: .string), "translation")
-    }
-    func testOnlyTrailingSpaceKindIsNormalizedAndItsCountIsExact() {
-        XCTAssertTrue(OfficeTextRules.samePrefix("正文 \u{00a0} \u{00a0}", "正文    "))
-        XCTAssertFalse(OfficeTextRules.samePrefix("正文   ", "正文    "))
-        XCTAssertFalse(OfficeTextRules.samePrefix("正文    新输入", "正文    "))
-        XCTAssertFalse(OfficeTextRules.samePrefix("a\u{00a0}b", "a b"))
     }
     @MainActor func testNonbreakingTriggerSpacesAreRemovedWithoutChangingFont() throws {
         let original = NSAttributedString(string: "正文 \u{00a0} \u{00a0}", attributes: [.font: NSFont.systemFont(ofSize: 13)])
