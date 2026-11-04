@@ -27,7 +27,7 @@ zsh scripts/build_compatibility_fixture.sh
 open .build/CompatibilityFixture.app
 ```
 
-网页示例位于 `Tools/compatibility-fixture.html` 与 `Tools/selection-fixture/`。WPS 测试文档不随仓库分发；如需调试，可自行创建名为 `TranslateBar-WPS-Test` 的临时文档，并参照 `OfficeSmokeTest.swift` 中的固定测试内容。
+网页示例位于 `Tools/compatibility-fixture.html` 与 `Tools/selection-fixture/`。WPS 划词取词调试可使用自行创建的 `TranslateBar-WPS-Test` 临时文档，固定测试内容见 `OfficeText.swift` 中的 `readSmokeTest`。
 
 部分可执行文件的 `--*smoke-test` 模式会读写当前聚焦的专用测试窗口，并尝试恢复内容。与主应用共用进程锁的模式需先退出正在运行的 TranslateBar。带 `live`、`cache` 或 `keychain` 的接口验证可能连接 OpenAI，真实文字和语音调用会计入本地费用；不要把这些模式放入不经意执行的测试流程。
 
@@ -57,7 +57,7 @@ PowerPoint 在发送任何选区方向键前，还要求初始 Copy、Cut 命令
 
 本轮修正复制格式的 CR/LF/CRLF、手动换行表示差异及附加段落标记。Word 核对并去掉真实选区中多出的段落标记；PowerPoint 在有后段时使用有界键盘重建选区，避免依赖其不可靠的 AX 选区写入。PPT 使用纯文本继承样式，连续空格以等量不换行空格保留，避免 RTF 插入额外段落及纯文本压缩空格。Excel 只在确认 Enter/Cancel 编辑按钮可用且文字焦点与编辑栏内容和光标一致时采用兼容路径；不提交单元格，不翻译公式。
 
-`--microsoft-office-read-test`、`--microsoft-office-selection-test`、`--microsoft-office-smoke-test` 只接受当前活动 Office 中名称以 `TranslateBar-MS-Test-` 开头的临时文档。固定测试句与译文见 `MicrosoftOfficeSmokeTest.swift`；这些模式不读取 API Key、不调用 API。测试前先退出常驻 TranslateBar，使用菜单“打开方式”在对应 Office 中打开临时文件并进入文字编辑状态。自动化发送的按键不能作为实体键盘空格手势已经通过的证据。
+0.4.10 的测试使用名称以 `TranslateBar-MS-Test-` 开头的临时文档与固定译文，不调用 API。当时的 `--microsoft-office-*` 模式及固定译文见 `v0.4.10` 标签中的 `MicrosoftOfficeSmokeTest.swift`。自动化发送的按键不能作为实体键盘空格手势已经通过的证据。
 
 测试报告位于 `.build/office-live-reports/`，仅用于本机调试，不提交仓库。固定译文测试验证生产取词、回填、撤销及周围文字；PPT 的空格种类可变化，数量必须一致。复杂富文本、表格结构、受保护内容和不同版本仍需各自验证，不能由本轮结果推断所有 Office 内容都兼容。
 
@@ -69,7 +69,7 @@ PowerPoint 在发送任何选区方向键前，还要求初始 Copy、Cut 命令
 2. 快捷键是唯一的按应用数据（`ParagraphSelectionKey`）：默认 ⌘⇧←，Word/WPS ⌘⇧↑，PowerPoint ⌥⇧↑，Excel ⇧Home。不默认使用 ⌥⇧↑，它在代码编辑器中会移动或复制行，在 Slack、Discord 中会切换频道。
 3. 复制到临时剪贴板，要求末尾有触发空格（允许输入法吞掉一次），不含换行、图片或附件。
 4. 翻译后重新选中，复制内容必须与取词时一致，然后粘贴纯文本，并再次读回核对。纯文本继承选区处的格式；读回的字号或粗斜体不同时保留译文并提示，可撤销。
-5. 撤销用同一流程把原文粘贴回去，要求当前段落仍是写入的译文。
+5. TranslateBar 的撤销用同一流程粘贴回原文的纯文本，要求当前段落仍是写入的译文。要恢复段内混合格式，在继续编辑前使用原应用的撤销（⌘Z）。
 
 前台应用、窗口、焦点、键鼠操作（滚动除外）任一变化即停止；取词与回填期间按 `TextInputGate` 暂存实体按键。
 
